@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import type { DexterApiBrowserPasskeySigner } from '@dexterai/vault/signers/browser';
 import { passkeyLogin } from './relay';
 import { fetchUsdcBalance } from './balance';
+import { createPasskeySigner } from './signer';
 import { ConnectError } from './types';
 import type { ConnectVault, PasskeyLoginTokens, SignInResult } from './types';
 
@@ -29,6 +31,9 @@ export interface UseSignInWithDexter {
   vaultAddress: string | null;
   vaultPda: string | null;
   credentialId: string | null;
+  /** Guest passkey signer for authorizing spends / opening x402 tabs. null until
+   *  a vault is connected. Drive it via `passkeySigner.signOperation(op)`. */
+  passkeySigner: DexterApiBrowserPasskeySigner | null;
   /** USD available. number once read; null = unknown → chip shows wallet only. */
   usdcBalance: number | null;
   refreshBalance: () => Promise<void>;
@@ -86,6 +91,14 @@ export function useSignInWithDexter(
     setStatus('idle');
   }, []);
 
+  // The guest passkey signer for the connected vault. The SDK signer owns the
+  // WebAuthn ceremony + sha256(op) hashing; the connector supplies the anon
+  // ServerPolicy. Rebuilt only when the vault (or apiBase) changes.
+  const passkeySigner = useMemo(
+    () => (vault ? createPasskeySigner(vault, apiBase) : null),
+    [vault, apiBase],
+  );
+
   // Best-effort balance read once a vault with a resolved ATA is connected.
   useEffect(() => {
     void refreshBalance();
@@ -101,6 +114,7 @@ export function useSignInWithDexter(
     vaultAddress: vault?.swigAddress ?? null,
     vaultPda: vault?.vaultPda ?? null,
     credentialId: vault?.credentialId ?? null,
+    passkeySigner,
     usdcBalance,
     refreshBalance,
     error,

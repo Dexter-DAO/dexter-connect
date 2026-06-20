@@ -5,6 +5,7 @@ import type {
   SignInResult,
 } from './types';
 import { ConnectError } from './types';
+import { base64urlToBytes, bytesToBase64url } from './base64';
 
 const DEFAULT_API_BASE = 'https://api.dexter.cash';
 const ANON_SIGN_BASE = '/api/passkey-anon/sign';
@@ -128,25 +129,4 @@ async function readErrorCode(res: Response): Promise<string> {
     // non-JSON body — fall through
   }
   return `http_${res.status}`;
-}
-
-// ── base64url helpers (local; mirror dexter-fe/app/lib/passkey-anon) ──────────
-
-function base64ToBytes(s: string): Uint8Array {
-  const bin = atob(s);
-  const out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i += 1) out[i] = bin.charCodeAt(i);
-  return out;
-}
-
-function base64urlToBytes(s: string): Uint8Array {
-  const pad = s.length % 4 === 0 ? '' : '='.repeat(4 - (s.length % 4));
-  const b64 = s.replace(/-/g, '+').replace(/_/g, '/') + pad;
-  return base64ToBytes(b64);
-}
-
-function bytesToBase64url(bytes: Uint8Array): string {
-  let bin = '';
-  for (let i = 0; i < bytes.length; i += 1) bin += String.fromCharCode(bytes[i]);
-  return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
