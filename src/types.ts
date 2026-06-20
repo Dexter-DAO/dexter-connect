@@ -17,14 +17,17 @@ export interface PasskeyLoginTokens {
  */
 export interface ConnectVault {
   vaultPda: string;
-  /** Swig wallet-address PDA, base58 — the user-facing Dexter Wallet address. */
+  /** Swig state address, base58 — the user-facing Dexter Wallet address. */
   swigAddress: string;
+  /** v2 swig wallet PDA (deposit address); null until the swig is deployed. */
+  receiveAddress: string | null;
+  /** Swig wallet's USDC ATA, base58 (for the connected-chip balance read);
+   *  null until the swig is deployed. Server-resolved (off-curve-safe). */
+  usdcAta: string | null;
   /** base64 33-byte SEC1 compressed P-256 authority pubkey (for the signer). */
   publicKey: string;
   userHandle: string;
   credentialId: string;
-  /** Deposit address (swig wallet-address PDA). */
-  receiveAddress: string;
 }
 
 /** Result of a completed "Sign in with Dexter" ceremony. */

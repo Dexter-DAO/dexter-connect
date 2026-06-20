@@ -1,3 +1,10 @@
 // @dexterai/connect/react — React surface.
-// <SignInWithDexter/> + useSignInWithDexter() land here (Phase 2).
-export {};
+
+export { useSignInWithDexter } from './useSignInWithDexter';
+export type {
+  UseSignInWithDexter,
+  UseSignInWithDexterConfig,
+  ConnectStatus,
+} from './useSignInWithDexter';
+
+// <SignInWithDexter/> button + connected chip land next (Phase 2.3).
