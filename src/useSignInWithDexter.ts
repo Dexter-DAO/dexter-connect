@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { passkeyLogin } from './relay';
 import { fetchUsdcBalance } from './balance';
 import { ConnectError } from './types';
-import type { ConnectVault, PasskeyLoginTokens } from './types';
+import type { ConnectVault, PasskeyLoginTokens, SignInResult } from './types';
 
 /** Dexter's Helius proxy — authoritative for browser Solana reads. */
 const DEFAULT_RPC = 'https://api.dexter.cash/proxy/helius/rpc';
@@ -19,7 +19,9 @@ export interface UseSignInWithDexterConfig {
 export interface UseSignInWithDexter {
   status: ConnectStatus;
   isVaultConnected: boolean;
-  signIn: () => Promise<void>;
+  /** Run the ceremony. Resolves with the result; throws ConnectError on failure
+   *  (error is also captured in `error` + `status==='error'` for declarative UI). */
+  signIn: () => Promise<SignInResult>;
   disconnect: () => void;
   session: PasskeyLoginTokens | null;
   vault: ConnectVault | null;
@@ -58,7 +60,7 @@ export function useSignInWithDexter(
     setUsdcBalance(await fetchUsdcBalance(rpcUrl, ata));
   }, [vault, rpcUrl]);
 
-  const signIn = useCallback(async () => {
+  const signIn = useCallback(async (): Promise<SignInResult> => {
     setError(null);
     setStatus('pending');
     try {
@@ -66,11 +68,13 @@ export function useSignInWithDexter(
       setSession(result.session);
       setVault(result.vault ?? null);
       setStatus('done');
+      return result;
     } catch (err) {
-      setError(
-        err instanceof ConnectError ? err : new ConnectError('sign_in_failed', String(err)),
-      );
+      const e =
+        err instanceof ConnectError ? err : new ConnectError('sign_in_failed', String(err));
+      setError(e);
       setStatus('error');
+      throw e;
     }
   }, [apiBase]);
 

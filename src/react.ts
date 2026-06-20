@@ -7,4 +7,5 @@ export type {
   ConnectStatus,
 } from './useSignInWithDexter';
 
-// <SignInWithDexter/> button + connected chip land next (Phase 2.3).
+export { SignInWithDexter } from './SignInWithDexter';
+export type { SignInWithDexterProps } from './SignInWithDexter';
