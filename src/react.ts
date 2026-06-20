@@ -9,3 +9,6 @@ export type {
 
 export { SignInWithDexter } from './SignInWithDexter';
 export type { SignInWithDexterProps } from './SignInWithDexter';
+
+export { useDexterWallet } from './useDexterWallet';
+export type { UseDexterWallet } from './useDexterWallet';
