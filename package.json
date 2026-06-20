@@ -1,13 +1,21 @@
 {
   "name": "@dexterai/connect",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Sign in with Dexter — passkey connector. Composes @dexterai/vault.",
   "type": "module",
   "exports": {
-    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
-    "./react": { "types": "./dist/react.d.ts", "import": "./dist/react.js" }
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./react": {
+      "types": "./dist/react.d.ts",
+      "import": "./dist/react.js"
+    }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsup",
     "test": "vitest run",
