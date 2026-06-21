@@ -12,6 +12,11 @@ export type {
 export { createAnonServerPolicy } from './anon-policy';
 export type { AnonServerPolicy, AnonChallengeResult } from './anon-policy';
 export { createPasskeySigner } from './signer';
+// Wallet creation: mint a brand-new passkey + vault, named at birth. The
+// lifecycle verb that was missing — pairs with passkeyLogin (sign in an existing
+// wallet) so any consumer can create one, not just dexter-fe.
+export { createWallet } from './enroll';
+export type { CreateWalletConfig, CreateWalletResult } from './enroll';
 // Wallet-identity store: the canonical owner of the active wallet handle, with
 // first-class eject/switch/list. Consumers MUST read/write through here instead
 // of touching localStorage by hand (the welded-wallet bug fix).
