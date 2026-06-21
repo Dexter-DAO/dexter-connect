@@ -22,7 +22,18 @@ export {
   listWallets,
   switchWallet,
   forgetWallet,
+  getCredentialId,
   subscribe as subscribeWallet,
   ACTIVE_WALLET_STORAGE_KEY,
 } from './walletStore';
 export type { StoredWallet } from './walletStore';
+// WebAuthn Signal API: keep the OS keychain in sync — rename a passkey
+// post-creation, auto-prune deleted/stale passkeys. Feature-detected; no-op
+// where the browser lacks support (naming-at-creation stays the floor).
+export {
+  passkeySignalSupport,
+  renamePasskey,
+  prunePasskey,
+  syncAcceptedPasskeys,
+} from './signals';
+export type { PasskeySignalSupport } from './signals';

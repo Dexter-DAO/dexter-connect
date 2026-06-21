@@ -27,6 +27,9 @@ export interface StoredWallet {
   handle: string;
   /** Human label for switch UIs (e.g. an email, or "Dexter Wallet"). */
   label?: string;
+  /** base64url credential id — enables the WebAuthn Signal API to prune this
+   *  passkey from the OS manager on eject (see ./signals). */
+  credentialId?: string;
   /** Epoch ms of last activation — for ordering the switcher. */
   lastUsedAt?: number;
 }
@@ -94,7 +97,7 @@ export function getActiveHandle(): string | null {
  * Set the active wallet handle (e.g. after enroll or recover), upserting it into
  * the roster with a fresh `lastUsedAt`. Idempotent. Fires subscribers.
  */
-export function setActiveHandle(handle: string, label?: string): void {
+export function setActiveHandle(handle: string, label?: string, credentialId?: string): void {
   if (!hasStorage() || !handle) return;
   try {
     window.localStorage.setItem(ACTIVE_HANDLE_KEY, handle);
@@ -107,11 +110,17 @@ export function setActiveHandle(handle: string, label?: string): void {
   if (existing) {
     existing.lastUsedAt = now;
     if (label !== undefined) existing.label = label;
+    if (credentialId !== undefined) existing.credentialId = credentialId;
   } else {
-    roster.push({ handle, label, lastUsedAt: now });
+    roster.push({ handle, label, credentialId, lastUsedAt: now });
   }
   writeRoster(roster);
   emit();
+}
+
+/** Look up a known wallet's stored credentialId (for Signal-API prune on eject). */
+export function getCredentialId(handle: string): string | undefined {
+  return readRoster().find((w) => w.handle === handle)?.credentialId;
 }
 
 /**
