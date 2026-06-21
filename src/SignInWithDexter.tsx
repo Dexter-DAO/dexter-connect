@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactElement } from 'react';
+import { useEffect, type ReactElement } from 'react';
 import { useSignInWithDexter, type UseSignInWithDexterConfig } from './useSignInWithDexter';
 import type { SignInResult, ConnectError } from './types';
 
@@ -9,12 +9,73 @@ export interface SignInWithDexterProps extends UseSignInWithDexterConfig {
   onError?: (error: ConnectError) => void;
   /** Button label when signed out. Default "Sign in with Dexter". */
   label?: string;
-  /** className on the root (button when signed out, chip when connected) — for
-   *  full restyling. Brand it from the consumer; the inline defaults are a base. */
+  /** Visual variant: 'primary' = filled ember (default), 'secondary' = outline. */
+  variant?: 'primary' | 'secondary';
+  /** Extra className composed after the brand classes. Prefer overriding the
+   *  `--dx-*` CSS variables for theming over restyling from scratch. */
   className?: string;
   /** Render the built-in connected chip (wallet + balance). Default true.
    *  Set false to render nothing once connected (consumer renders its own UI). */
   showConnectedChip?: boolean;
+}
+
+const STYLE_ID = 'dexter-connect-button-styles';
+
+/**
+ * The branded button's CSS, injected ONCE into <head>. Class-based (not inline)
+ * so interaction states (hover / focus / active / disabled) and the loading
+ * spinner can animate — and themeable: a consumer restyles by overriding the
+ * `--dx-*` CSS variables on the button or any ancestor, never by forking the
+ * component. This is the cure for hand-rolled copies: one button, many skins.
+ */
+const BUTTON_CSS = `
+@keyframes dx-spin { to { transform: rotate(360deg); } }
+@keyframes dx-pulse { 0%,100% { opacity: 1; } 50% { opacity: .6; } }
+.dx-btn{
+  --dx-ember:#f26c18; --dx-ember-2:#ba3a00; --dx-fg:#fff4ea; --dx-radius:0px;
+  position:relative; display:inline-flex; align-items:center; justify-content:center; gap:10px;
+  padding:11px 22px; border:1px solid color-mix(in srgb,var(--dx-ember) 55%,transparent);
+  border-radius:var(--dx-radius);
+  background:linear-gradient(135deg,var(--dx-ember),var(--dx-ember-2));
+  color:var(--dx-fg); font:inherit; font-weight:600; font-size:.78rem; letter-spacing:.12em;
+  text-transform:uppercase; cursor:pointer; -webkit-tap-highlight-color:transparent;
+  box-shadow:0 14px 26px color-mix(in srgb,var(--dx-ember) 24%,transparent);
+  transition:transform .16s ease, box-shadow .16s ease, filter .16s ease, background .16s ease;
+}
+.dx-btn:hover{ transform:translateY(-1px); filter:brightness(1.07); box-shadow:0 20px 34px color-mix(in srgb,var(--dx-ember) 32%,transparent); }
+.dx-btn:active{ transform:translateY(0); filter:brightness(.97); box-shadow:0 8px 16px color-mix(in srgb,var(--dx-ember) 22%,transparent); }
+.dx-btn:focus-visible{ outline:none; box-shadow:0 0 0 3px color-mix(in srgb,var(--dx-ember) 38%,transparent); }
+.dx-btn:disabled{ cursor:default; filter:saturate(.85) brightness(.98); }
+.dx-btn--secondary{ background:transparent; color:var(--dx-ember); box-shadow:none; border-color:color-mix(in srgb,var(--dx-ember) 45%,transparent); }
+.dx-btn--secondary:hover{ background:color-mix(in srgb,var(--dx-ember) 9%,transparent); filter:none; box-shadow:none; }
+.dx-btn__mark{ flex-shrink:0; }
+.dx-btn__spin{ width:15px; height:15px; flex-shrink:0; border-radius:50%;
+  border:2px solid color-mix(in srgb,currentColor 30%,transparent); border-top-color:currentColor;
+  animation:dx-spin .7s linear infinite; }
+.dx-btn__doing{ animation:dx-pulse 1.4s ease-in-out infinite; }
+.dx-chip{ display:inline-flex; align-items:center; gap:8px; padding:6px 10px; font:inherit;
+  font-variant-numeric:tabular-nums; border-radius:var(--dx-radius,0);
+  border:1px solid color-mix(in srgb,var(--dx-ember,#f26c18) 35%,transparent); }
+.dx-chip__dot{ width:7px; height:7px; border-radius:50%; background:var(--dx-ember,#f26c18); }
+.dx-chip__bal{ font-weight:600; opacity:.85; }
+.dx-chip__x{ margin-left:2px; border:none; background:transparent; color:inherit; cursor:pointer; font-size:16px; line-height:1; opacity:.6; }
+.dx-chip__x:hover{ opacity:1; }
+`;
+
+function ensureStyles(): void {
+  if (typeof document === 'undefined') return;
+  if (document.getElementById(STYLE_ID)) return;
+  const el = document.createElement('style');
+  el.id = STYLE_ID;
+  el.textContent = BUTTON_CSS;
+  document.head.appendChild(el);
+}
+
+// Inject at module load too (covers above-the-fold use before the effect runs).
+ensureStyles();
+
+function cx(...parts: Array<string | false | undefined>): string {
+  return parts.filter(Boolean).join(' ');
 }
 
 function shortAddress(addr: string): string {
@@ -30,12 +91,12 @@ function formatUsd(n: number): string {
 function DexterMark(): ReactElement {
   return (
     <svg
+      className="dx-btn__mark"
       width="18"
       height="18"
       viewBox="0 0 300 300"
       fill="currentColor"
       aria-hidden="true"
-      style={{ flexShrink: 0 }}
     >
       <path d="M143.18,22.65c35.41,7.66,68.19,23.6,94.89,48.28,5.22,4.86,11.17,10.45,15.18,16.1,1.38,1.93,1.94,3.6.99,5.23-1.08,1.92-4.22,3.41-6.56,4.17-28.39,9.43-61.55,8.26-88.62-4.69-13.81-7.66-17.02-5.76-31.67-3.48-21.89,2.38-46.67.37-65.06-12.31-6.07-4.99-9.33-12.71-8.8-20.52-.16-9.4,4.25-18.12,11.47-24.06,21.29-17.85,52.64-14.45,78-8.77l.18.04h0Z" />
       <path d="M46.08,129.98c1.06-1.03,3.52-1.07,5.29-1.04,48.98-.05,98.1-.06,146.83-.1,17.53.14,35.01-.31,52.49.18,2.13.18,3.89.74,4.73,2.05,1.46,2.38.35,6.09-1.98,7.6-3.66,2.05-8.62,1.33-12.86,1.74-2.85.12-5.45.13-7.02,2.02-.91,1.07-1.28,2.56-1.56,3.95-.57,3.23-1.16,6.52-1.89,9.62-2.81,12.43-8.68,24.65-19.76,31.56-9.49,5.59-20.42,6.86-31.2,5.75-11.88-1.69-22.15-8.81-29.11-18.28-3.51-4.81-4.92-10.5-5.8-16.29-.47-2.56-.51-5.87-1.35-8-1.16-3.38-6.14-2.59-9.25-1.92-4.21.95-4.39,5.7-5.14,9.19-2.25,11.18-6.84,20.68-16.15,27.65-1.31,1.05-2.91,2.03-2.12,3.66,2.5,3.21,6.65,4.49,10.44,5.97,3.26,1.17,6.86,2.41,7.18,6.06.05,8.18-11.97,3.46-16.32,1.85-3.95-1.55-7.4-4.27-10.42-7.26-3.92-4.28-9.66-4.5-15.16-4.45-3.45-.07-6.99-.19-10.45-.82-21.29-4-31.08-21.3-30.9-42.01-.08-4.63.03-9.32.09-13.91.04-1.69.07-3.46,1.28-4.67l.1-.09h0Z" />
@@ -45,21 +106,23 @@ function DexterMark(): ReactElement {
 }
 
 /**
- * Turnkey "Sign in with Dexter" element. Signed out → an ember button; signed
- * in → a compact chip with the Dexter Wallet address + USD available. Wraps
- * useSignInWithDexter; consumers who need the raw vault/passkey data should use
- * that hook directly. Inline styles are a sensible default — restyle via
- * className (Dexter Ember, no emojis, "unlock" banned per brand voice).
+ * Turnkey "Sign in with Dexter" element. Signed out → the branded ember button
+ * (hover / focus / active / loading states, themeable via --dx-* CSS vars);
+ * signed in → a compact chip with the Dexter Wallet address + USD available.
+ * Wraps useSignInWithDexter; consumers who need the raw vault/passkey data
+ * should use that hook directly. Brand voice: no emojis, "unlock" banned.
  */
 export function SignInWithDexter(props: SignInWithDexterProps): ReactElement | null {
   const {
     onSuccess,
     onError,
     label = 'Sign in with Dexter',
+    variant = 'primary',
     className,
     showConnectedChip = true,
     ...config
   } = props;
+  useEffect(ensureStyles, []);
   const c = useSignInWithDexter(config);
 
   const handleClick = async () => {
@@ -73,29 +136,33 @@ export function SignInWithDexter(props: SignInWithDexterProps): ReactElement | n
   if (c.isVaultConnected) {
     if (!showConnectedChip) return null;
     return (
-      <span className={className} style={CHIP}>
-        <span style={DOT} aria-hidden />
+      <span className={cx('dx-chip', className)}>
+        <span className="dx-chip__dot" aria-hidden />
         <span>{c.vaultAddress ? shortAddress(c.vaultAddress) : 'Connected'}</span>
         {c.usdcBalance !== null && (
-          <span style={BALANCE}>{formatUsd(c.usdcBalance)} available</span>
+          <span className="dx-chip__bal">{formatUsd(c.usdcBalance)} available</span>
         )}
-        <button type="button" onClick={c.disconnect} style={DISCONNECT} aria-label="Disconnect">
+        <button type="button" className="dx-chip__x" onClick={c.disconnect} aria-label="Disconnect">
           {'×'}
         </button>
       </span>
     );
   }
 
+  const pending = c.status === 'pending';
   return (
     <button
       type="button"
-      className={className}
+      className={cx('dx-btn', variant === 'secondary' && 'dx-btn--secondary', className)}
       onClick={handleClick}
-      disabled={c.status === 'pending'}
-      style={BUTTON}
+      disabled={pending}
+      aria-busy={pending}
     >
-      {c.status === 'pending' ? (
-        'Signing in…'
+      {pending ? (
+        <>
+          <span className="dx-btn__spin" aria-hidden />
+          <span className="dx-btn__doing">Connecting…</span>
+        </>
       ) : (
         <>
           <DexterMark />
@@ -105,59 +172,3 @@ export function SignInWithDexter(props: SignInWithDexterProps): ReactElement | n
     </button>
   );
 }
-
-// ── default styles (a base; consumers restyle via className) ──────────────────
-const EMBER = '#ef6820';
-
-const BUTTON: CSSProperties = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  gap: 10,
-  padding: '10px 22px',
-  border: '1px solid rgba(242, 108, 24, 0.55)',
-  borderRadius: 0, // sharp corners — Dexter brand drops radius on structural elements
-  background: 'linear-gradient(135deg, rgba(242, 108, 24, 0.95), rgba(186, 58, 0, 0.88))',
-  color: '#fff4ea',
-  font: 'inherit',
-  fontWeight: 600,
-  fontSize: '0.78rem',
-  letterSpacing: '0.12em',
-  textTransform: 'uppercase',
-  boxShadow: '0 16px 28px rgba(242, 108, 24, 0.25)',
-  cursor: 'pointer',
-};
-
-const CHIP: CSSProperties = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: 8,
-  padding: '6px 10px',
-  borderRadius: 0, // sharp — match the brand
-  border: '1px solid rgba(239,104,32,0.35)',
-  font: 'inherit',
-  fontVariantNumeric: 'tabular-nums',
-};
-
-const DOT: CSSProperties = {
-  width: 7,
-  height: 7,
-  borderRadius: '50%',
-  background: EMBER,
-};
-
-const BALANCE: CSSProperties = {
-  fontWeight: 600,
-  opacity: 0.85,
-};
-
-const DISCONNECT: CSSProperties = {
-  marginLeft: 2,
-  border: 'none',
-  background: 'transparent',
-  color: 'inherit',
-  cursor: 'pointer',
-  fontSize: 16,
-  lineHeight: 1,
-  opacity: 0.6,
-};
