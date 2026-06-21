@@ -1,15 +1,8 @@
 import { useEffect, type ReactElement } from 'react';
 import { useSignInWithDexter, type UseSignInWithDexterConfig } from './useSignInWithDexter';
-import type { SignInResult, ConnectError, CeremonyPhase } from './types';
+import type { SignInResult, ConnectError } from './types';
 import { DexterButton, ensureDexterButtonStyles, cx } from './DexterButton';
-
-/** Per-phase loading labels — the live "connecting steps" in the button. */
-const PHASE_LABEL: Record<CeremonyPhase, string> = {
-  challenge: 'Preparing…',
-  passkey: 'Waiting for your passkey…',
-  verifying: 'Verifying…',
-  finalizing: 'Finishing…',
-};
+import { ceremonyPhaseLabel } from './phase';
 
 export interface SignInWithDexterProps extends UseSignInWithDexterConfig {
   /** Fired with the result the moment sign-in completes. */
@@ -85,7 +78,7 @@ export function SignInWithDexter(props: SignInWithDexterProps): ReactElement | n
   return (
     <DexterButton
       loading={c.status === 'pending'}
-      loadingLabel={c.phase ? PHASE_LABEL[c.phase] : 'Connecting…'}
+      loadingLabel={c.phase ? ceremonyPhaseLabel(c.phase) : 'Connecting…'}
       variant={variant}
       block={block}
       className={className}

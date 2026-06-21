@@ -17,6 +17,10 @@ export { createPasskeySigner } from './signer';
 // wallet) so any consumer can create one, not just dexter-fe.
 export { createWallet } from './enroll';
 export type { CreateWalletConfig, CreateWalletResult } from './enroll';
+export type { CeremonyPhase } from './types';
+// Human label for a ceremony phase — one source of truth for "connecting steps"
+// copy across sign-in and consumer create flows (Rule #7).
+export { ceremonyPhaseLabel } from './phase';
 // Wallet-identity store: the canonical owner of the active wallet handle, with
 // first-class eject/switch/list. Consumers MUST read/write through here instead
 // of touching localStorage by hand (the welded-wallet bug fix).
