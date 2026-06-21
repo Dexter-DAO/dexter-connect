@@ -3,6 +3,7 @@ import type {
   PasskeyLoginTokens,
   ConnectVault,
   SignInResult,
+  CeremonyPhase,
 } from './types';
 import { ConnectError } from './types';
 import { base64urlToBytes, bytesToBase64url } from './base64';
@@ -32,10 +33,14 @@ interface ChallengeOptions {
  */
 export async function passkeyLogin(
   config: DexterConnectConfig = {},
+  onPhase?: (phase: CeremonyPhase) => void,
 ): Promise<SignInResult> {
   const apiBase = (config.apiBase ?? DEFAULT_API_BASE).replace(/\/$/, '');
+  onPhase?.('challenge');
   const options = await fetchLoginChallenge(apiBase);
+  onPhase?.('passkey');
   const credential = await getAssertion(options);
+  onPhase?.('verifying');
   return submitLogin(apiBase, credential);
 }
 

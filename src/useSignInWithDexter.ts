@@ -4,7 +4,7 @@ import { passkeyLogin } from './relay';
 import { fetchUsdcBalance } from './balance';
 import { createPasskeySigner } from './signer';
 import { ConnectError } from './types';
-import type { ConnectVault, PasskeyLoginTokens, SignInResult } from './types';
+import type { ConnectVault, PasskeyLoginTokens, SignInResult, CeremonyPhase } from './types';
 
 /** Dexter's Helius proxy — authoritative for browser Solana reads. */
 const DEFAULT_RPC = 'https://api.dexter.cash/proxy/helius/rpc';
@@ -20,6 +20,9 @@ export interface UseSignInWithDexterConfig {
 
 export interface UseSignInWithDexter {
   status: ConnectStatus;
+  /** Live ceremony phase while status==='pending' (challenge → passkey →
+   *  verifying); null otherwise. Drives the button's "connecting steps". */
+  phase: CeremonyPhase | null;
   isVaultConnected: boolean;
   /** Run the ceremony. Resolves with the result; throws ConnectError on failure
    *  (error is also captured in `error` + `status==='error'` for declarative UI). */
@@ -54,6 +57,7 @@ export function useSignInWithDexter(
 ): UseSignInWithDexter {
   const { apiBase, rpcUrl = DEFAULT_RPC } = config;
   const [status, setStatus] = useState<ConnectStatus>('idle');
+  const [phase, setPhase] = useState<CeremonyPhase | null>(null);
   const [session, setSession] = useState<PasskeyLoginTokens | null>(null);
   const [vault, setVault] = useState<ConnectVault | null>(null);
   const [usdcBalance, setUsdcBalance] = useState<number | null>(null);
@@ -67,18 +71,21 @@ export function useSignInWithDexter(
 
   const signIn = useCallback(async (): Promise<SignInResult> => {
     setError(null);
+    setPhase(null);
     setStatus('pending');
     try {
-      const result = await passkeyLogin(apiBase ? { apiBase } : {});
+      const result = await passkeyLogin(apiBase ? { apiBase } : {}, setPhase);
       setSession(result.session);
       setVault(result.vault ?? null);
       setStatus('done');
+      setPhase(null);
       return result;
     } catch (err) {
       const e =
         err instanceof ConnectError ? err : new ConnectError('sign_in_failed', String(err));
       setError(e);
       setStatus('error');
+      setPhase(null);
       throw e;
     }
   }, [apiBase]);
@@ -106,6 +113,7 @@ export function useSignInWithDexter(
 
   return {
     status,
+    phase,
     isVaultConnected: status === 'done' && vault !== null,
     signIn,
     disconnect,

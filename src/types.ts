@@ -37,6 +37,13 @@ export interface SignInResult {
   vault?: ConnectVault;
 }
 
+/**
+ * Coarse ceremony phase, emitted as a sign-in/create ceremony progresses so the
+ * UI can show live "connecting steps" instead of one flat spinner:
+ *   challenge → passkey (the OS prompt) → verifying → finalizing (create only).
+ */
+export type CeremonyPhase = 'challenge' | 'passkey' | 'verifying' | 'finalizing';
+
 export interface DexterConnectConfig {
   /** dexter-api base. Default https://api.dexter.cash. */
   apiBase?: string;

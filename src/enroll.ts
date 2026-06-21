@@ -18,7 +18,7 @@
 // GUARANTEED to stick in the OS keychain (no dependence on the post-hoc Signal
 // API, which some platforms no-op). Blank name → the brand default.
 
-import type { ConnectVault, DexterConnectConfig } from './types';
+import type { ConnectVault, DexterConnectConfig, CeremonyPhase } from './types';
 import { ConnectError } from './types';
 import { base64urlToBytes, bytesToBase64url } from './base64';
 import { setActiveHandle } from './walletStore';
@@ -33,6 +33,9 @@ export interface CreateWalletConfig extends DexterConnectConfig {
   name?: string;
   /** RP id for the new credential. Default "dexter.cash". */
   rpId?: string;
+  /** Called as the ceremony progresses, for live "connecting steps" UI:
+   *  challenge → passkey → verifying → finalizing. */
+  onPhase?: (phase: CeremonyPhase) => void;
 }
 
 export interface CreateWalletResult {
@@ -72,9 +75,13 @@ export async function createWallet(
   const rpId = config.rpId ?? DEFAULT_RP_ID;
   const name = (config.name && config.name.trim()) || DEFAULT_WALLET_NAME;
 
+  config.onPhase?.('challenge');
   const options = await fetchEnrollChallenge(apiBase);
+  config.onPhase?.('passkey');
   const credential = await createCredential(options, name, rpId);
+  config.onPhase?.('verifying');
   const enrolled = await submitEnrollComplete(apiBase, credential);
+  config.onPhase?.('finalizing');
   const init = await initializeVault(apiBase, enrolled.userHandle, enrolled.credentialId);
 
   // Record in the canonical store — the label matches the passkey's keychain
