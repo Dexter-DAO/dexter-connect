@@ -47,6 +47,18 @@ export type CeremonyPhase = 'challenge' | 'passkey' | 'verifying' | 'finalizing'
 export interface DexterConnectConfig {
   /** dexter-api base. Default https://api.dexter.cash. */
   apiBase?: string;
+  /**
+   * Where the WebAuthn ceremony runs:
+   *  - 'auto' (default): inline on the canonical Dexter origin (dexter.cash),
+   *    popup on ANY other origin — so a third-party site works without the
+   *    WebAuthn rpId-origin problem (in-page only works on dexter.cash).
+   *  - 'popup': always via the hosted popup (works on any website).
+   *  - 'inline': always in-page — only valid on a Dexter origin; this is what
+   *    the hosted ceremony page itself uses.
+   */
+  transport?: 'auto' | 'popup' | 'inline';
+  /** Hosted ceremony page (popup transport). Default https://dexter.cash/connect. */
+  connectHost?: string;
 }
 
 /** Typed error whose `code` is the server's snake_case error string. */

@@ -22,6 +22,7 @@ import type { ConnectVault, DexterConnectConfig, CeremonyPhase } from './types';
 import { ConnectError } from './types';
 import { base64urlToBytes, bytesToBase64url } from './base64';
 import { setActiveHandle } from './walletStore';
+import { shouldUsePopup, openCeremonyPopup } from './popup';
 
 const DEFAULT_API_BASE = 'https://api.dexter.cash';
 const DEFAULT_RP_ID = 'dexter.cash';
@@ -68,6 +69,15 @@ interface CreationOptionsJSON {
 export async function createWallet(
   config: CreateWalletConfig = {},
 ): Promise<CreateWalletResult> {
+  // Hosted-popup transport: on any non-Dexter origin, run the create ceremony in
+  // a popup on dexter.cash and get the wallet back (works on any website).
+  if (shouldUsePopup(config.transport)) {
+    return openCeremonyPopup<CreateWalletResult>('create', {
+      connectHost: config.connectHost,
+      name: config.name,
+      apiBase: config.apiBase,
+    });
+  }
   if (typeof navigator === 'undefined' || !navigator.credentials) {
     throw new ConnectError('webauthn_unsupported', 'WebAuthn unavailable in this environment');
   }

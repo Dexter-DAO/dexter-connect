@@ -7,6 +7,7 @@ import type {
 } from './types';
 import { ConnectError } from './types';
 import { base64urlToBytes, bytesToBase64url } from './base64';
+import { shouldUsePopup, openCeremonyPopup } from './popup';
 
 const DEFAULT_API_BASE = 'https://api.dexter.cash';
 const ANON_SIGN_BASE = '/api/passkey-anon/sign';
@@ -35,6 +36,14 @@ export async function passkeyLogin(
   config: DexterConnectConfig = {},
   onPhase?: (phase: CeremonyPhase) => void,
 ): Promise<SignInResult> {
+  // Hosted-popup transport: on any non-Dexter origin, run the ceremony in a
+  // popup on dexter.cash and get the same result back (works on any website).
+  if (shouldUsePopup(config.transport)) {
+    return openCeremonyPopup<SignInResult>('signin', {
+      connectHost: config.connectHost,
+      apiBase: config.apiBase,
+    });
+  }
   const apiBase = (config.apiBase ?? DEFAULT_API_BASE).replace(/\/$/, '');
   onPhase?.('challenge');
   const options = await fetchLoginChallenge(apiBase);
