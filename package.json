@@ -1,6 +1,6 @@
 {
   "name": "@dexterai/connect",
-  "version": "0.11.0",
+  "version": "0.15.0",
   "description": "Sign in with Dexter — passkey connector. Composes @dexterai/vault.",
   "type": "module",
   "exports": {
@@ -32,5 +32,8 @@
     "tsup": "^8.5.0",
     "typescript": "^5.6.2",
     "vitest": "^4.1.9"
+  },
+  "dependencies": {
+    "@simplewebauthn/browser": "^13.3.0"
   }
 }

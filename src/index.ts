@@ -1,7 +1,8 @@
 // @dexterai/connect — framework-free entry.
 // The React surface (<SignInWithDexter/> + useSignInWithDexter()) is in ./react.
 
-export { passkeyLogin } from './relay';
+export { passkeyLogin, continueWithDexter } from './relay';
+export type { ContinueResult } from './relay';
 export { ConnectError } from './types';
 export type {
   PasskeyLoginTokens,
@@ -12,6 +13,12 @@ export type {
 export { createAnonServerPolicy } from './anon-policy';
 export type { AnonServerPolicy, AnonChallengeResult } from './anon-policy';
 export { createPasskeySigner } from './signer';
+// The identity resolver: the single "who is active" combiner (account session +
+// passkey-vault handle). Pure, framework-free, passkey-vault-FIRST. The SDK stays
+// auth-agnostic — the consumer passes its account token in. Identity = WHO; facts
+// (balance/claimed) stay server-side. One resolver for every consumer (Rule #7).
+export { resolveIdentity } from './identity';
+export type { IdentityKind, IdentityInput, ResolvedIdentity } from './identity';
 // Wallet creation: mint a brand-new passkey + vault, named at birth. The
 // lifecycle verb that was missing — pairs with passkeyLogin (sign in an existing
 // wallet) so any consumer can create one, not just dexter-fe.

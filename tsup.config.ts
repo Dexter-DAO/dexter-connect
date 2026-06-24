@@ -5,5 +5,5 @@ export default defineConfig({
   format: ['esm'],
   dts: true,
   clean: true,
-  external: ['react', '@dexterai/vault'],
+  external: ['react', '@dexterai/vault', '@simplewebauthn/browser'],
 });

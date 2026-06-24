@@ -6,18 +6,17 @@ import type {
   CeremonyPhase,
 } from './types';
 import { ConnectError } from './types';
-import { base64urlToBytes, bytesToBase64url } from './base64';
+import { startAuthentication, browserSupportsWebAuthn } from '@simplewebauthn/browser';
+import type {
+  AuthenticationResponseJSON,
+  PublicKeyCredentialRequestOptionsJSON,
+} from '@simplewebauthn/browser';
 import { shouldUsePopup, openCeremonyPopup } from './popup';
+import { createWallet, type CreateWalletConfig, type CreateWalletResult } from './enroll';
+import { getActiveHandle } from './walletStore';
 
 const DEFAULT_API_BASE = 'https://api.dexter.cash';
 const ANON_SIGN_BASE = '/api/passkey-anon/sign';
-
-interface ChallengeOptions {
-  challenge: string; // base64url
-  rpId?: string;
-  timeout?: number;
-  userVerification?: UserVerificationRequirement;
-}
 
 /**
  * "Sign in with Dexter" — the discoverable-credential login ceremony.
@@ -44,16 +43,62 @@ export async function passkeyLogin(
       apiBase: config.apiBase,
     });
   }
+  if (!browserSupportsWebAuthn()) {
+    throw new ConnectError('webauthn_unsupported', 'WebAuthn unavailable in this environment');
+  }
   const apiBase = (config.apiBase ?? DEFAULT_API_BASE).replace(/\/$/, '');
   onPhase?.('challenge');
   const options = await fetchLoginChallenge(apiBase);
   onPhase?.('passkey');
-  const credential = await getAssertion(options);
+  // SimpleWebAuthn runs the get() ceremony + all the base64url/ArrayBuffer
+  // marshalling and returns server-ready JSON. (Replaces hand-rolled getAssertion.)
+  let response: AuthenticationResponseJSON;
+  try {
+    response = await startAuthentication({ optionsJSON: options });
+  } catch (err) {
+    throw new ConnectError('webauthn_failed', err instanceof Error ? err.message : String(err));
+  }
   onPhase?.('verifying');
-  return submitLogin(apiBase, credential);
+  return submitLogin(apiBase, response);
 }
 
-async function fetchLoginChallenge(apiBase: string): Promise<ChallengeOptions> {
+// ── Hybrid "continue" — register-or-sign-in in one call ──────────────────────
+// dexter-agents approved op=continue ALONGSIDE signin|create (back-compat). The
+// CALLER no longer pre-decides — this does, so one "Sign in with Dexter" button
+// works for both a brand-new user and a returning one (like "Sign in with
+// Google" creates if you're new). Critically, a new user must NOT dead-end at
+// the discoverable-credential cross-device QR: when this device has no known
+// wallet handle, we REGISTER rather than attempt a resident-key sign-in.
+export type ContinueResult =
+  | ({ kind: 'signin' } & SignInResult)
+  | ({ kind: 'create' } & CreateWalletResult);
+
+export async function continueWithDexter(
+  config: CreateWalletConfig = {},
+  onPhase?: (phase: CeremonyPhase) => void,
+): Promise<ContinueResult> {
+  // Off-origin: the popup on dexter.cash decides (it alone can see the dexter.cash
+  // handle and attempt a discoverable sign-in); same call, result handed back.
+  if (shouldUsePopup(config.transport)) {
+    return openCeremonyPopup<ContinueResult>('continue', {
+      connectHost: config.connectHost,
+      name: config.name,
+      apiBase: config.apiBase,
+    });
+  }
+  // Inline (on the Dexter origin): a known wallet handle on THIS device → sign it
+  // in; otherwise register a fresh one (never the QR dead-end for a new user).
+  if (getActiveHandle()) {
+    const result = await passkeyLogin(config, onPhase);
+    return { kind: 'signin', ...result };
+  }
+  const result = await createWallet({ ...config, onPhase });
+  return { kind: 'create', ...result };
+}
+
+async function fetchLoginChallenge(
+  apiBase: string,
+): Promise<PublicKeyCredentialRequestOptionsJSON> {
   const res = await fetch(`${apiBase}${ANON_SIGN_BASE}/login-challenge`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -62,61 +107,23 @@ async function fetchLoginChallenge(apiBase: string): Promise<ChallengeOptions> {
   if (!res.ok) {
     throw new ConnectError('login_challenge_failed', `login-challenge ${res.status}`);
   }
-  const data = (await res.json()) as { options?: ChallengeOptions };
+  const data = (await res.json()) as { options?: PublicKeyCredentialRequestOptionsJSON };
   if (!data?.options?.challenge) {
     throw new ConnectError('login_challenge_malformed', 'no challenge in response');
   }
   return data.options;
 }
 
-async function getAssertion(options: ChallengeOptions): Promise<PublicKeyCredential> {
-  if (typeof navigator === 'undefined' || !navigator.credentials) {
-    throw new ConnectError('webauthn_unsupported', 'WebAuthn unavailable in this environment');
-  }
-  let credential: PublicKeyCredential | null;
-  try {
-    credential = (await navigator.credentials.get({
-      publicKey: {
-        challenge: base64urlToBytes(options.challenge).buffer.slice(0) as ArrayBuffer,
-        rpId: options.rpId,
-        timeout: options.timeout ?? 60_000,
-        userVerification: options.userVerification ?? 'required',
-        // No allowCredentials — discoverable resident-key login.
-      },
-    })) as PublicKeyCredential | null;
-  } catch (err) {
-    throw new ConnectError('webauthn_failed', err instanceof Error ? err.message : String(err));
-  }
-  if (!credential || credential.type !== 'public-key') {
-    throw new ConnectError('no_credential', 'WebAuthn returned no credential');
-  }
-  return credential;
-}
-
 async function submitLogin(
   apiBase: string,
-  credential: PublicKeyCredential,
+  response: AuthenticationResponseJSON,
 ): Promise<SignInResult> {
-  const assertion = credential.response as AuthenticatorAssertionResponse;
-  const credentialJson = {
-    id: credential.id,
-    rawId: bytesToBase64url(new Uint8Array(credential.rawId)),
-    type: credential.type,
-    response: {
-      clientDataJSON: bytesToBase64url(new Uint8Array(assertion.clientDataJSON)),
-      authenticatorData: bytesToBase64url(new Uint8Array(assertion.authenticatorData)),
-      signature: bytesToBase64url(new Uint8Array(assertion.signature)),
-      userHandle: assertion.userHandle
-        ? bytesToBase64url(new Uint8Array(assertion.userHandle))
-        : null,
-    },
-    clientExtensionResults: credential.getClientExtensionResults?.() ?? {},
-  };
-
+  // SimpleWebAuthn's AuthenticationResponseJSON is already the server's expected
+  // credential shape (id/rawId/response/clientExtensionResults/type) — send as-is.
   const res = await fetch(`${apiBase}${ANON_SIGN_BASE}/passkey-login`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ credential: credentialJson }),
+    body: JSON.stringify({ credential: response }),
   });
 
   if (!res.ok) {

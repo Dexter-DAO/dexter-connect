@@ -45,7 +45,7 @@ interface PopupResultMessage {
  * requestId nonce matches this call. Rejects on block / close / timeout / error.
  */
 export function openCeremonyPopup<T>(
-  op: 'signin' | 'create',
+  op: 'signin' | 'create' | 'continue',
   config: { connectHost?: string; name?: string; apiBase?: string } = {},
 ): Promise<T> {
   if (typeof window === 'undefined') {

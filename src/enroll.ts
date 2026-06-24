@@ -20,7 +20,11 @@
 
 import type { ConnectVault, DexterConnectConfig, CeremonyPhase } from './types';
 import { ConnectError } from './types';
-import { base64urlToBytes, bytesToBase64url } from './base64';
+import { startRegistration } from '@simplewebauthn/browser';
+import type {
+  RegistrationResponseJSON,
+  PublicKeyCredentialCreationOptionsJSON,
+} from '@simplewebauthn/browser';
 import { setActiveHandle } from './walletStore';
 import { shouldUsePopup, openCeremonyPopup } from './popup';
 
@@ -46,18 +50,6 @@ export interface CreateWalletResult {
   credentialId: string;
   /** The freshly initialized vault (swig not yet deployed; deploys lazily). */
   vault: ConnectVault;
-}
-
-/** Server-issued WebAuthn creation options (the `options` field of the challenge). */
-interface CreationOptionsJSON {
-  rp: { id?: string; name: string };
-  user: { id: string; name: string; displayName: string };
-  challenge: string;
-  pubKeyCredParams: Array<{ type: 'public-key'; alg: number }>;
-  timeout?: number;
-  excludeCredentials?: Array<{ id: string; type: 'public-key'; transports?: string[] }>;
-  authenticatorSelection?: AuthenticatorSelectionCriteria;
-  attestation?: AttestationConveyancePreference;
 }
 
 /**
@@ -88,9 +80,25 @@ export async function createWallet(
   config.onPhase?.('challenge');
   const options = await fetchEnrollChallenge(apiBase);
   config.onPhase?.('passkey');
-  const credential = await createCredential(options, name, rpId);
+  // Override the keychain labels: rp.name = the brand shown in the OS sheet;
+  // user.name/displayName = the chosen wallet name (the server sends a raw,
+  // unreadable handle). These aren't part of the signed attestation, so setting
+  // them client-side is safe — same as the old buildCreationOptions did.
+  const optionsJSON: PublicKeyCredentialCreationOptionsJSON = {
+    ...options,
+    rp: { ...options.rp, id: options.rp.id ?? rpId, name: 'Dexter' },
+    user: { ...options.user, name, displayName: name },
+  };
+  let regResponse: RegistrationResponseJSON;
+  try {
+    // SimpleWebAuthn runs create() + all the base64url/ArrayBuffer marshalling
+    // and returns server-ready JSON. (Replaces hand-rolled createCredential.)
+    regResponse = await startRegistration({ optionsJSON });
+  } catch (err) {
+    throw new ConnectError('webauthn_failed', err instanceof Error ? err.message : String(err));
+  }
   config.onPhase?.('verifying');
-  const enrolled = await submitEnrollComplete(apiBase, credential);
+  const enrolled = await submitEnrollComplete(apiBase, regResponse);
   config.onPhase?.('finalizing');
   const init = await initializeVault(apiBase, enrolled.userHandle, enrolled.credentialId);
 
@@ -119,62 +127,32 @@ export async function createWallet(
 // Ceremony legs
 // ---------------------------------------------------------------------------
 
-async function fetchEnrollChallenge(apiBase: string): Promise<CreationOptionsJSON> {
+async function fetchEnrollChallenge(
+  apiBase: string,
+): Promise<PublicKeyCredentialCreationOptionsJSON> {
   const res = await fetch(`${apiBase}/api/passkey-anon/enroll/challenge`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: '{}',
   });
   if (!res.ok) throw new ConnectError('enroll_challenge_failed', `enroll/challenge ${res.status}`);
-  const data = (await res.json()) as { options?: CreationOptionsJSON };
+  const data = (await res.json()) as { options?: PublicKeyCredentialCreationOptionsJSON };
   if (!data?.options?.challenge) {
     throw new ConnectError('enroll_challenge_malformed', 'no creation options in response');
   }
   return data.options;
 }
 
-async function createCredential(
-  options: CreationOptionsJSON,
-  name: string,
-  rpId: string,
-): Promise<PublicKeyCredential> {
-  let credential: PublicKeyCredential | null;
-  try {
-    credential = (await navigator.credentials.create({
-      publicKey: buildCreationOptions(options, name, rpId),
-    })) as PublicKeyCredential | null;
-  } catch (err) {
-    throw new ConnectError('webauthn_failed', err instanceof Error ? err.message : String(err));
-  }
-  if (!credential || credential.type !== 'public-key') {
-    throw new ConnectError('no_credential', 'authenticator returned no credential');
-  }
-  return credential;
-}
-
 async function submitEnrollComplete(
   apiBase: string,
-  credential: PublicKeyCredential,
+  response: RegistrationResponseJSON,
 ): Promise<{ credentialId: string; publicKey: string; userHandle: string }> {
-  const attestation = credential.response as AuthenticatorAttestationResponse;
-  const credentialJson = {
-    id: credential.id,
-    rawId: bytesToBase64url(new Uint8Array(credential.rawId)),
-    type: credential.type,
-    response: {
-      attestationObject: bytesToBase64url(new Uint8Array(attestation.attestationObject)),
-      clientDataJSON: bytesToBase64url(new Uint8Array(attestation.clientDataJSON)),
-      transports:
-        typeof attestation.getTransports === 'function' ? attestation.getTransports() : [],
-    },
-    clientExtensionResults: credential.getClientExtensionResults?.() ?? {},
-    authenticatorAttachment:
-      (credential as { authenticatorAttachment?: string }).authenticatorAttachment ?? null,
-  };
+  // RegistrationResponseJSON already matches the server's expected credential
+  // shape (id/rawId/response.{attestationObject,clientDataJSON,transports}/...).
   const res = await fetch(`${apiBase}/api/passkey-anon/enroll/complete`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ credential: credentialJson }),
+    body: JSON.stringify({ credential: response }),
   });
   if (!res.ok) throw new ConnectError(await readErrorCode(res), `enroll/complete ${res.status}`);
   return (await res.json()) as { credentialId: string; publicKey: string; userHandle: string };
@@ -201,39 +179,6 @@ async function initializeVault(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/** base64url string → a fresh ArrayBuffer (BufferSource for the WebAuthn call). */
-function toBuf(b64url: string): ArrayBuffer {
-  return base64urlToBytes(b64url).buffer.slice(0) as ArrayBuffer;
-}
-
-function buildCreationOptions(
-  o: CreationOptionsJSON,
-  name: string,
-  rpId: string,
-): PublicKeyCredentialCreationOptions {
-  return {
-    // rp.name = the site shown in the keychain; user.name/displayName = the
-    // wallet label the user sees. We override the server's user.name (a raw,
-    // unreadable handle) with the chosen wallet name.
-    rp: { id: o.rp.id ?? rpId, name: 'Dexter' },
-    user: {
-      id: toBuf(o.user.id),
-      name,
-      displayName: name,
-    },
-    challenge: toBuf(o.challenge),
-    pubKeyCredParams: o.pubKeyCredParams,
-    timeout: o.timeout,
-    excludeCredentials: o.excludeCredentials?.map((c) => ({
-      id: toBuf(c.id),
-      type: c.type,
-      transports: c.transports as AuthenticatorTransport[] | undefined,
-    })),
-    authenticatorSelection: o.authenticatorSelection,
-    attestation: o.attestation,
-  };
-}
 
 /** Read the server's snake_case `error` field; fall back to an http_<status> code. */
 async function readErrorCode(res: Response): Promise<string> {

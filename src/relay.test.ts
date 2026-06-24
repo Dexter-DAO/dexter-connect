@@ -1,5 +1,19 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+// passkeyLogin now delegates the WebAuthn get() + base64url marshalling to
+// @simplewebauthn/browser, so we mock at THAT boundary: control the library's
+// output and assert passkeyLogin's own behavior (challenge → assert → login).
+vi.mock('@simplewebauthn/browser', () => ({
+  startAuthentication: vi.fn(),
+  startRegistration: vi.fn(),
+  browserSupportsWebAuthn: vi.fn(() => true),
+}));
+
 import { passkeyLogin } from './relay';
+import { startAuthentication, browserSupportsWebAuthn } from '@simplewebauthn/browser';
+
+const mockStartAuth = vi.mocked(startAuthentication);
+const mockSupports = vi.mocked(browserSupportsWebAuthn);
 
 const challengeResp = {
   options: {
@@ -18,31 +32,28 @@ const tokensResp = {
   tokenType: 'bearer',
 };
 
-function fakeCredential(): unknown {
-  const buf = (n: number) => new Uint8Array([n]).buffer;
-  return {
-    id: 'cred-abc',
-    rawId: buf(1),
-    type: 'public-key',
-    response: {
-      clientDataJSON: buf(2),
-      authenticatorData: buf(3),
-      signature: buf(4),
-      userHandle: buf(5),
-    },
-    getClientExtensionResults: () => ({}),
-  };
-}
+// What startAuthentication() resolves to — the server-ready credential JSON.
+const authResponse = {
+  id: 'cred-abc',
+  rawId: 'cred-abc',
+  response: {
+    clientDataJSON: 'AA',
+    authenticatorData: 'AA',
+    signature: 'AA',
+    userHandle: 'AA',
+  },
+  clientExtensionResults: {},
+  type: 'public-key' as const,
+};
 
 describe('passkeyLogin', () => {
   beforeEach(() => {
-    vi.stubGlobal('navigator', {
-      credentials: { get: vi.fn(async () => fakeCredential()) },
-    });
+    mockSupports.mockReturnValue(true);
+    mockStartAuth.mockResolvedValue(authResponse);
   });
   afterEach(() => {
     vi.unstubAllGlobals();
-    vi.restoreAllMocks();
+    vi.clearAllMocks();
   });
 
   it('runs challenge -> assert -> login and returns the session tokens', async () => {
@@ -57,8 +68,12 @@ describe('passkeyLogin', () => {
     expect(result.session.accessToken).toBe('at');
     expect(result.session.tokenType).toBe('bearer');
     expect(result.vault).toBeUndefined(); // vault-review hasn't shipped the vault payload yet
+    // the server's options are handed to the library verbatim
+    expect(mockStartAuth).toHaveBeenCalledWith({ optionsJSON: challengeResp.options });
     expect(fetchMock.mock.calls[0][0]).toContain('/api/passkey-anon/sign/login-challenge');
     expect(fetchMock.mock.calls[1][0]).toContain('/api/passkey-anon/sign/passkey-login');
+    // the credential POSTed is exactly the library's response JSON
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).credential).toEqual(authResponse);
   });
 
   it('includes vault when the server returns it (forward-compat with ASK 1)', async () => {
@@ -90,13 +105,13 @@ describe('passkeyLogin', () => {
     await expect(passkeyLogin()).rejects.toMatchObject({ code: 'credential_not_found' });
   });
 
-  it('throws webauthn_unsupported when navigator.credentials is absent', async () => {
-    vi.stubGlobal('navigator', {});
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce({ ok: true, json: async () => challengeResp });
+  it('throws webauthn_unsupported (fail-fast) when WebAuthn is unavailable', async () => {
+    mockSupports.mockReturnValue(false);
+    const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
 
     await expect(passkeyLogin()).rejects.toMatchObject({ code: 'webauthn_unsupported' });
+    expect(fetchMock).not.toHaveBeenCalled(); // bails before any network
+    expect(mockStartAuth).not.toHaveBeenCalled();
   });
 });
