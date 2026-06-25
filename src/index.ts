@@ -53,3 +53,15 @@ export {
   syncAcceptedPasskeys,
 } from './signals';
 export type { PasskeySignalSupport } from './signals';
+// Agent-spend control surface (Layer 2 — the honest two-mode read). ONE primitive
+// (an agent can spend from your vault), TWO grant modes over ONE balance: the
+// automatic role-2 rail + explicit Tabs. Pure assembler: reads `agentSpendArmed`
+// (the on-chain authority.signer decode), NEVER `liveSessionCount` (the trap).
+export { assembleAgentSpendStatus } from './agentSpend';
+export type {
+  AgentSpendStatus,
+  AutomaticAgentSpend,
+  AgentSpendTab,
+  RawAgentSpendStatus,
+  RawAgentSpendSession,
+} from './agentSpend';
