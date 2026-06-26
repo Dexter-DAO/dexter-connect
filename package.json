@@ -22,11 +22,18 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@dexterai/vault": ">=0.19",
+    "@dexterai/vault": ">=0.22",
+    "@solana/web3.js": "^1.98.0",
     "react": ">=18"
+  },
+  "peerDependenciesMeta": {
+    "@solana/web3.js": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@dexterai/vault": "^0.24.0",
+    "@solana/web3.js": "^1.98.4",
     "@types/react": "^19.1.12",
     "react": "^19.2.5",
     "tsup": "^8.5.0",

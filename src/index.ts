@@ -65,3 +65,13 @@ export type {
   RawAgentSpendStatus,
   RawAgentSpendSession,
 } from './agentSpend';
+// Agent-spend VERBS — the off/on switch for the automatic role-2 rail (the WRITE
+// side of the read above). Migrated out of dexter-fe so every consumer shares ONE
+// implementation (Rule #7). Framework-free: the verbs take `apiOrigin` as a param
+// (connect reads no env) and a minimal `{ kind, userHandle }` identity.
+export { revokeAgentSpend, enableAgentSpend, AgentSpendError, describeAgentSpendError } from './agentSpend';
+export type {
+  AgentSpendIdentity,
+  RevokeAgentSpendResult,
+  EnableAgentSpendResult,
+} from './agentSpend';

@@ -20,6 +20,38 @@
 //
 // Pure + framework-free: takes the raw /status and /sessions shapes as INPUT and
 // returns the two-mode object. The consumer owns the fetch; this owns the truth.
+//
+// ── The VERBS (revoke / enable) ──────────────────────────────────────────────
+// The assembler above is the READ. Below are the WRITES — the off/on switch for
+// the AUTOMATIC role-2 rail. Migrated out of dexter-fe (app/lib/vault/agentSpend.ts)
+// so every consumer shares ONE implementation instead of hand-rolling its own
+// fork (Rule #7 — kill bypass drift).
+//
+// CEREMONY NOTE: the agent-spend endpoints verify the passkey with
+// @simplewebauthn/server, where `expectedChallenge = base64url(the RAW message
+// bytes)`. So we sign the message DIRECTLY as the WebAuthn challenge (a plain
+// navigator.credentials.get via startAuthentication) — NOT through the on-chain
+// `signOperation` ceremony, which signs sha256(message) over a server-minted
+// challenge (that convention is for the on-chain vault ops + /grants endpoints).
+// The message bytes still come from the SDK builder (NEVER hand-rolled — Rule #7).
+//
+// The assertion is TARGETED (allowCredentials = the wallet's credential id) so
+// the OS goes straight to the biometric — same prompt UX as every other passkey
+// button in the app, NOT a discoverable account-picker sheet.
+//
+// FRAMEWORK-FREE: connect reads NO process.env. The API origin is a PARAMETER the
+// caller passes (mirrors fetchUsdcBalance taking its rpcUrl). VAULT TYPES: the
+// @dexterai/vault message builders are typed in PublicKey from @solana/web3.js —
+// web3.js is therefore an inherent PEER of this verb surface (declared as a peer
+// dep, never bundled; the consumer already has it).
+
+import { PublicKey } from '@solana/web3.js';
+import { startAuthentication } from '@simplewebauthn/browser';
+import { revokeAgentSpendMessage, enableAgentSpendMessage } from '@dexterai/vault/messages';
+import { DEXTER_VAULT_PROGRAM_ID } from '@dexterai/vault/constants';
+
+import { bytesToBase64url, base64urlToBase64 } from './base64';
+import type { IdentityKind } from './identity';
 
 /** The automatic role-2 agent-spend rail. */
 export interface AutomaticAgentSpend {
@@ -150,4 +182,216 @@ export function assembleAgentSpendStatus(
       expiresAt: s.expiresAt,
     })),
   };
+}
+
+// ── identity the verbs need ──────────────────────────────────────────────────
+
+/**
+ * The minimal identity the off/on switch needs: WHO is active + the wallet
+ * handle the anon router keys on. Structurally satisfied by connect's
+ * ResolvedIdentity (pass it straight through), or hand-build `{ kind, userHandle }`.
+ */
+export interface AgentSpendIdentity {
+  /** Passkey-vault-first identity axis. Agent-spend is Dexter-Wallet-only. */
+  kind: IdentityKind;
+  /** The passkey-vault user handle the anon router addresses, or null. */
+  userHandle: string | null;
+}
+
+// ── typed error + human copy ─────────────────────────────────────────────────
+
+/** Typed error whose `code` is the server's snake_case error string. */
+export class AgentSpendError extends Error {
+  readonly code: string;
+  constructor(code: string, message?: string) {
+    super(message ?? code);
+    this.code = code;
+    this.name = 'AgentSpendError';
+  }
+}
+
+/** Map an AgentSpendError.code to plain, user-facing copy. */
+export function describeAgentSpendError(code: string): string {
+  switch (code) {
+    case 'verification_failed':
+      return "That passkey didn't verify — try again.";
+    case 'missing_fields':
+      return 'The request was incomplete — try again.';
+    case 'vault_not_found':
+      return 'No wallet found for this passkey.';
+    case 'nonce_not_found':
+    case 'nonce_already_used':
+      return 'That confirmation expired — tap again to retry.';
+    case 'revoke_failed':
+    case 'enable_failed':
+      return "The server couldn't complete it — try again shortly.";
+    case 'not_guest':
+      return 'This control is only available on a Dexter Wallet.';
+    default:
+      return code;
+  }
+}
+
+async function agentSpendError(res: Response): Promise<AgentSpendError> {
+  let code = `http_${res.status}`;
+  try {
+    const body = (await res.json()) as { error?: string };
+    if (body?.error) code = String(body.error);
+  } catch {
+    /* non-JSON body — keep http_<status> */
+  }
+  return new AgentSpendError(code, `agent-spend ${res.status}: ${code}`);
+}
+
+/** Dexter-Wallet (passkey-vault) guard — the off/on switch is anon-vault only. */
+function assertDexterWallet(id: AgentSpendIdentity): void {
+  if (id.kind !== 'passkey-vault') {
+    throw new AgentSpendError('not_guest', 'agent-spend off/on switch is Dexter Wallet only');
+  }
+}
+
+/** Normalize a caller-supplied API origin: trim and strip a trailing slash. */
+function normalizeOrigin(apiOrigin: string): string {
+  return apiOrigin.trim().replace(/\/$/, '');
+}
+
+// ── the ceremony ─────────────────────────────────────────────────────────────
+
+/** The RP the passkeys are registered under — the current origin's domain (e.g.
+ *  dexter.cash). Derived, not hardcoded, so it follows the deployment. */
+function rpId(): string {
+  return typeof window !== 'undefined' ? window.location.hostname : 'dexter.cash';
+}
+
+/** The three fields the anon router verifies (sent as standard base64). */
+interface AnonSignedPayload {
+  clientDataJSON: string;
+  authenticatorData: string;
+  signature: string;
+}
+
+/**
+ * Sign a raw operation message DIRECTLY as the WebAuthn challenge — the
+ * convention the agent-spend endpoints verify against. Targeted at the given
+ * credential (base64url) so the OS prompts the biometric directly. Returns the
+ * three fields as standard base64.
+ */
+async function assertOverMessage(
+  messageBytes: Uint8Array,
+  credentialId?: string | null,
+): Promise<AnonSignedPayload> {
+  const resp = await startAuthentication({
+    optionsJSON: {
+      challenge: bytesToBase64url(messageBytes),
+      rpId: rpId(),
+      userVerification: 'required',
+      ...(credentialId
+        ? { allowCredentials: [{ id: credentialId, type: 'public-key' as const }] }
+        : {}),
+    },
+  });
+  return {
+    clientDataJSON: base64urlToBase64(resp.response.clientDataJSON),
+    authenticatorData: base64urlToBase64(resp.response.authenticatorData),
+    signature: base64urlToBase64(resp.response.signature),
+  };
+}
+
+// ── the verbs ────────────────────────────────────────────────────────────────
+
+export interface RevokeAgentSpendResult {
+  revoked: boolean;
+}
+
+/**
+ * Revoke the AUTOMATIC role-2 agent-spend rail — the off-switch. Takes effect on
+ * the very next agent payment (the spend path reads agent_spend_revoked_at fresh
+ * per spend). Dexter-Wallet (anon-vault) only; `credentialId` (base64url) targets
+ * the biometric prompt.
+ *
+ * @param id            WHO is active — must be the passkey-vault (Dexter Wallet).
+ * @param vaultPda      The vault PDA, base58 string. Becomes the signed message.
+ * @param apiOrigin     The dexter-api origin (e.g. https://api.dexter.cash). The
+ *                      caller owns env; connect reads none.
+ * @param credentialId  The wallet's passkey credential id (base64url), to make
+ *                      the assertion a direct biometric, not an account picker.
+ */
+export async function revokeAgentSpend(
+  id: AgentSpendIdentity,
+  vaultPda: string,
+  apiOrigin: string,
+  credentialId?: string | null,
+): Promise<RevokeAgentSpendResult> {
+  assertDexterWallet(id);
+  const origin = normalizeOrigin(apiOrigin);
+  const message = revokeAgentSpendMessage({
+    programId: DEXTER_VAULT_PROGRAM_ID,
+    vaultPda: new PublicKey(vaultPda),
+  });
+  const signed = await assertOverMessage(message, credentialId);
+  const res = await fetch(`${origin}/api/passkey-vault-anon/revoke-agent-spend`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ userHandle: id.userHandle, signedPasskeyPayload: signed }),
+  });
+  if (!res.ok) throw await agentSpendError(res);
+  return (await res.json()) as RevokeAgentSpendResult;
+}
+
+export interface EnableAgentSpendResult {
+  enabled: boolean;
+}
+
+/**
+ * Re-enable the AUTOMATIC role-2 agent-spend rail — the ON switch. Turning spend
+ * back ON is the dangerous direction, so it is a two-step, replay-protected nonce
+ * flow: fetch a server-minted nonce+expiry (inert until redeemed), sign
+ * enableAgentSpendMessage over those EXACT values as the WebAuthn challenge,
+ * submit. Dexter-Wallet (anon-vault) only.
+ *
+ * @param id            WHO is active — must be the passkey-vault (Dexter Wallet).
+ * @param vaultPda      The vault PDA, base58 string.
+ * @param apiOrigin     The dexter-api origin (e.g. https://api.dexter.cash).
+ * @param credentialId  The wallet's passkey credential id (base64url).
+ */
+export async function enableAgentSpend(
+  id: AgentSpendIdentity,
+  vaultPda: string,
+  apiOrigin: string,
+  credentialId?: string | null,
+): Promise<EnableAgentSpendResult> {
+  assertDexterWallet(id);
+  const origin = normalizeOrigin(apiOrigin);
+
+  // Step 1 — challenge: nonce + expiry (inert until redeemed in step 2).
+  const challengeRes = await fetch(
+    `${origin}/api/passkey-vault-anon/enable-agent-spend/challenge`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ userHandle: id.userHandle }),
+    },
+  );
+  if (!challengeRes.ok) throw await agentSpendError(challengeRes);
+  const { nonce, expiry } = (await challengeRes.json()) as { nonce: string; expiry: number };
+
+  // Step 2 — verify: sign the 112-byte ON-switch message over the EXACT
+  // nonce+expiry, submit. The server burns the nonce atomically with the flip.
+  const message = enableAgentSpendMessage({
+    programId: DEXTER_VAULT_PROGRAM_ID,
+    vaultPda: new PublicKey(vaultPda),
+    nonce: BigInt(nonce),
+    expiry: BigInt(expiry),
+  });
+  const signed = await assertOverMessage(message, credentialId);
+  const verifyRes = await fetch(
+    `${origin}/api/passkey-vault-anon/enable-agent-spend/verify`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ userHandle: id.userHandle, nonce, signedPasskeyPayload: signed }),
+    },
+  );
+  if (!verifyRes.ok) throw await agentSpendError(verifyRes);
+  return (await verifyRes.json()) as EnableAgentSpendResult;
 }

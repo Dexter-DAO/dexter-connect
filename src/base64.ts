@@ -29,6 +29,18 @@ export function bytesToBase64url(bytes: Uint8Array): string {
 }
 
 /**
+ * base64url → standard base64 WITH `=` padding.
+ *
+ * SimpleWebAuthn returns assertion fields as base64url; the anon agent-spend
+ * router parses them as STANDARD base64. Inverse of bytesToBase64url's last two
+ * replacements + re-pad to a multiple of 4.
+ */
+export function base64urlToBase64(s: string): string {
+  const t = s.replace(/-/g, '+').replace(/_/g, '/');
+  return t + '='.repeat((4 - (t.length % 4)) % 4);
+}
+
+/**
  * Encode a 64-byte compact r||s P-256 signature as DER (ASN.1 SEQUENCE of two
  * INTEGERs).
  *
