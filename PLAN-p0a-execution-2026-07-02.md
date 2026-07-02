@@ -1,0 +1,45 @@
+# PLAN — P0a execution: the offline server pair
+
+**Status:** active · 2026-07-02 · owner: **connect-fable** (boss seat per Branch, 2026-07-02)
+**Executes:** SPEC §3 P0a + CONTRACT-dexter-session-token.md, both as amended 2026-07-02.
+**Why this seat:** the prior commission chain evaporated (gtm commissioned vault-review 6/26; vault-review queued
+it and was stood down 7/01; the reply never got read). P0a does not queue behind anyone's other work again.
+
+## Ruling on the 2026-06-26 roadmap
+
+The spec's five-axis analysis and phase split hold up against the code — ratified. Amendments:
+
+1. **Priority order (mine):** P0a → session persistence (P1.1 client half) → the hygiene pair → README rewrite
+   → P0b mount-core / P3 script tag. Rationale: server trust is the platform unlock; persistence is the first
+   thing every adopter notices; distribution width comes after the story is real.
+2. **The hygiene pair ships TOGETHER:** mount-time CSS injection + `"sideEffects"` field are one change.
+   Adding `sideEffects: false` while CSS still injects at module load would let bundlers tree-shake the style
+   injection away — half-shipping this pair is worse than not shipping it.
+3. **README rewrite lands right after `./server` exists** — one rewrite covering the full surface (today it
+   documents 4 of 36 exports and misstates the peer deps), not two passes a week apart.
+4. **P2 hold REAFFIRMED.** The swig agent-spend re-platform gate stands. Before any P2 work, re-verify the final
+   surface with main-fable — not against today's role-2 path.
+
+## Work items
+
+| # | What | Owner | Exit criterion |
+|---|---|---|---|
+| 1 | Vault peer floor `>=0.30.0` + devDep `^0.30.0` | connect-fable | **DONE 2026-07-02** — typecheck, build, 45/45 tests green |
+| 2 | Hook SQL authored per CONTRACT §4 (incl. hardening) | connect-fable | SQL matches verified `user_vaults` semantics (checked live 7/02: `swig_address` = state addr; `user_handle` nullable bytea) |
+| 3 | Hook deploy: create fn + grants (psql, DB-first) + platform enable (Auth → Hooks) | api-fable deploys · connect-fable verifies | freshly-minted live token decodes with `dexter:{ver,vault,userHandle}` and ALL standard claims intact |
+| 4 | `@dexterai/connect/server` — `jose`, `algorithms:['ES256']` pinned, `(iss, jwksUrl)` parameterized, edge-safe | connect-fable | `verifyDexterSession` + `authenticateRequest` exported; runs on Workers/Vercel edge (no Node-only APIs) |
+| 5 | First consumers | connect-fable | status.dexter.cash board deletes its hand-rolled `/auth/v1/user` call (board-server.js:91); a 10-line vanilla page verifies on edge |
+| 6 | Publish 0.18.0 + Rule #7 consumer sweep | connect-fable | dexter-fe (pins `^0.16.0` — caret does NOT auto-bump across 0.x minors) and the board's esm.sh `@0.16.0` import both migrated; consumers grepped for bypass drift |
+| 7 | `<ConnectedSurfaces>` wallet-kit component (accepted from api-fable 2026-07-02) | connect-fable UI · api-fable backend | Auth-agnostic: surface list in as data, `onRevoke` callback out, raw tokens never enter the SDK. **Copy constraint until money-path enforcement lands: revoke reads "disconnect this surface"; the vault-wide agent-spend switch stays the prominent security kill.** Blocked on api-fable's list-endpoint contract. |
+
+## Risk register
+
+- **The hook runs on every token mint for every user.** A throwing hook can take down all auth. Mitigations:
+  body wrapped so any anomaly returns the event unchanged; verify with a real ceremony immediately after enable;
+  rollback = disable the hook in platform config (instant), then drop the function.
+- **Enablement is dashboard/Management-API config**, outside SQL — needs api-fable's or Branch's access. The
+  function alone does nothing.
+- **`dexter.origin` stays deferred** (CONTRACT §4): the hook cannot see the requesting site. It arrives when the
+  receiver page passes it — do not fake it in the hook.
+- **Phase-1 `iss` announces supabase.co.** Accepted per CONTRACT §3 (Branch, 6/26): deliberate sequencing, and the
+  `(iss, jwksUrl)` parameterization keeps the Phase-2 sovereign cutover a config flip. Do not let it calcify.
