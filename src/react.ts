@@ -32,3 +32,14 @@ export type { DexterWalletMenuProps } from './DexterWalletMenu';
 // active" for every surface and every consumer (Rule #7).
 export { useIdentity } from './useIdentity';
 export type { UseIdentityConfig } from './useIdentity';
+
+// Consent-at-birth chrome (Branch rulings 2026-07-02/03). AllowanceChips = the
+// $5/$20/$50/Custom allowance primitive (NONE preselected; zero is not consent);
+// CreateWalletPanel = the turnkey create surface that collects the authored
+// number and gates the branded Create CTA shut until it's valid, then runs the
+// full createWallet ceremony. One consent surface for every door (Rule #7);
+// themeable via --dx-* CSS vars.
+export { AllowanceChips } from './AllowanceChips';
+export type { AllowanceChipsProps } from './AllowanceChips';
+export { CreateWalletPanel } from './CreateWalletPanel';
+export type { CreateWalletPanelProps } from './CreateWalletPanel';
