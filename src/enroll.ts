@@ -27,6 +27,8 @@ import type {
 } from '@simplewebauthn/browser';
 import { setActiveHandle } from './walletStore';
 import { shouldUsePopup, openCeremonyPopup } from './popup';
+import { SESSION_TTL_30D } from './policy';
+import type { SpendPolicy } from './policy';
 
 const DEFAULT_API_BASE = 'https://api.dexter.cash';
 const DEFAULT_RP_ID = 'dexter.cash';
@@ -38,6 +40,13 @@ export interface CreateWalletConfig extends DexterConnectConfig {
   name?: string;
   /** RP id for the new credential. Default "dexter.cash". */
   rpId?: string;
+  /** Consent-at-birth allowance the user authored at creation (chips $5/$20/$50
+   *  or Custom; zero is not consent; build it with authoredPolicy()). When
+   *  present it rides the /initialize body so the number becomes the server-side
+   *  write-once consent record. The TTL is ruled fixed 30d — whatever the object
+   *  carries, the wire always sends SESSION_TTL_30D. Absent → no policy authored
+   *  (the vault initializes without one; nothing invents a default). */
+  spendPolicy?: SpendPolicy;
   /** Called as the ceremony progresses, for live "connecting steps" UI:
    *  challenge → passkey → verifying → finalizing. */
   onPhase?: (phase: CeremonyPhase) => void;
@@ -100,7 +109,12 @@ export async function createWallet(
   config.onPhase?.('verifying');
   const enrolled = await submitEnrollComplete(apiBase, regResponse);
   config.onPhase?.('finalizing');
-  const init = await initializeVault(apiBase, enrolled.userHandle, enrolled.credentialId);
+  const init = await initializeVault(
+    apiBase,
+    enrolled.userHandle,
+    enrolled.credentialId,
+    config.spendPolicy,
+  );
 
   // Record in the canonical store — the label matches the passkey's keychain
   // entry, and storing the credentialId lets a later eject() auto-prune it.
@@ -162,11 +176,21 @@ async function initializeVault(
   apiBase: string,
   userHandle: string,
   credentialId: string,
+  spendPolicy?: SpendPolicy,
 ): Promise<{ vaultPda: string; receiveAddress: string | null; swigStateAddress: string }> {
+  const body: Record<string, unknown> = { userHandle, credentialId, coolingOffSeconds: 0 };
+  // Consent-at-birth: when the user authored an allowance, it rides here (same
+  // wire slot as coolingOffSeconds). The TTL is ruled fixed 30d and never
+  // user-editable — overwrite whatever the caller's object carries with
+  // SESSION_TTL_30D so a tampered sessionTtlSeconds can never reach the server.
+  if (spendPolicy) {
+    body.spendLimitAtomic = spendPolicy.spendLimitAtomic;
+    body.sessionTtlSeconds = SESSION_TTL_30D;
+  }
   const res = await fetch(`${apiBase}/api/passkey-vault-anon/initialize`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ userHandle, credentialId, coolingOffSeconds: 0 }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) throw new ConnectError(await readErrorCode(res), `initialize ${res.status}`);
   return (await res.json()) as {

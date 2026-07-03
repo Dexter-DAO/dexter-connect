@@ -25,6 +25,13 @@ export type { IdentityKind, IdentityInput, ResolvedIdentity } from './identity';
 export { createWallet } from './enroll';
 export type { CreateWalletConfig, CreateWalletResult } from './enroll';
 export type { CeremonyPhase } from './types';
+// Consent-at-birth policy helpers (Branch rulings 2026-07-02/03). The SINGLE
+// source for the fixed-30d TTL and the USD→atomic parse — consumers stop
+// re-declaring SESSION_TTL_30D / usdToAtomic (Rule #7). The user authors the
+// number (zero is not consent; no caller invents a default); createWallet
+// threads the returned SpendPolicy into the /initialize body.
+export { SESSION_TTL_30D, usdToAtomic, authoredPolicy } from './policy';
+export type { SpendPolicy } from './policy';
 // Human label for a ceremony phase — one source of truth for "connecting steps"
 // copy across sign-in and consumer create flows (Rule #7).
 export { ceremonyPhaseLabel } from './phase';
