@@ -76,6 +76,22 @@ Two phases, **identical claim shape** in both, so the wire format never changes 
 - **Phase 2 (when sovereignty matters):** mint a Dexter-signed token. `iss = https://dexter.cash`, JWKS = `jwks.dexter.cash`.
   This sheds the Supabase-key/uptime coupling (the token currently *announces* `…supabase.co` in `iss`).
 
+  **Phase 2 STOOD UP 2026-07-03 (connect-fable) — Branch ruled it the critical path (anon OAuth leg +
+  /passkey-login weld removal + passkey authorize screen). Concretes, all live-verified:**
+  - **Key:** ES256 P-256, `kid dx-2026-07-a`, private key at dexter-api `.env` `DEXTER_TOKEN_SIGNING_KEY_B64`
+    (base64 PKCS8 PEM). **JWKS live at `https://dexter.cash/.well-known/jwks.json`** (nginx exact-match alias
+    → dexter-fe `public/.well-known/jwks.json`, Cache-Control 300s — inside the §6 10-min ceiling).
+  - **Claims:** identical `dexter:{ver,vault,userHandle,agentGrant}` shape as Phase 1 (that is the contract).
+    `sub` = the base64url userHandle (the identity root — anon vaults have no Supabase user). `aud` =
+    per-resource (main-fable ruling, e.g. `https://open.dexter.cash/mcp`). `exp` short (1h); refresh is the
+    OAuth AS's concern, honest `expires_in`.
+  - **Proof:** token minted with the key + verified by published `@dexterai/connect/server@0.18.0` configured
+    `{ iss: 'https://dexter.cash', jwksUrl: '…/.well-known/jwks.json' }` — isSignedIn true, vault surfaced,
+    tamper rejected. The verifier needed ZERO code change: the (iss, jwksUrl) parameterization did its job.
+  - **Minters:** dexter-api only (api-fable): the OAuth `/token` endpoint (anon vault-scope grants) and
+    `/passkey-login` (replacing the synthetic-Supabase-user weld; the relay return-shape change lands in
+    `@dexterai/connect` — connect-fable). Rotation per §6 dual-kid.
+
 **The contract requirement that makes Phase 2 a config change, not a rewrite:** verifiers **parameterize on `(iss, jwksUrl)`**
 — never hardcode Supabase. The `dexter.*` claim shape is signer-independent. Cutting over = changing two config values +
 standing up the Dexter signer; no consumer code changes.
