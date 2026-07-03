@@ -7,11 +7,29 @@ vi.mock('@simplewebauthn/browser', () => ({
   startRegistration: vi.fn(),
 }));
 
+// Popup transport mocked at the boundary so the third-party-origin create path
+// can be driven without a real window.open. shouldUsePopup routes on transport:
+// 'popup' → popup, else inline (the inline tests below pass transport:'inline').
+vi.mock('./popup', () => ({
+  shouldUsePopup: vi.fn((t?: string) => t === 'popup'),
+  openCeremonyPopup: vi.fn(),
+}));
+
+// setActiveHandle is the persistence sink under test — spy on it.
+vi.mock('./walletStore', () => ({
+  setActiveHandle: vi.fn(),
+}));
+
 import { createWallet } from './enroll';
 import { SESSION_TTL_30D, authoredPolicy } from './policy';
+import { ConnectError } from './types';
 import { startRegistration } from '@simplewebauthn/browser';
+import { openCeremonyPopup } from './popup';
+import { setActiveHandle } from './walletStore';
 
 const mockStartReg = vi.mocked(startRegistration);
+const mockPopup = vi.mocked(openCeremonyPopup);
+const mockSetActiveHandle = vi.mocked(setActiveHandle);
 
 const challengeResp = {
   options: {
@@ -101,5 +119,49 @@ describe('createWallet — spendPolicy on the /initialize body', () => {
     // The wire ALWAYS carries SESSION_TTL_30D regardless of the caller's object.
     expect(body.sessionTtlSeconds).toBe('2592000');
     expect(body.sessionTtlSeconds).not.toBe('999');
+  });
+});
+
+// ── Third-party-origin create runs in the hosted popup. The bug: the popup
+//    early-return handed back the CreateWalletResult without persisting, so the
+//    caller's localStorage stayed empty after a successful create. Fix persists
+//    from the returned result on the CALLER's origin.
+describe('createWallet — popup persistence', () => {
+  const popupResult = {
+    handle: 'popup-handle',
+    credentialId: 'popup-cred',
+    vault: {
+      vaultPda: 'vpda',
+      swigAddress: 'swig',
+      receiveAddress: null,
+      usdcAta: null,
+      publicKey: 'pub',
+      userHandle: 'popup-handle',
+      credentialId: 'popup-cred',
+    },
+  };
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+  });
+
+  it('persists the active handle from the CreateWalletResult (label = name)', async () => {
+    mockPopup.mockResolvedValueOnce(popupResult);
+
+    const out = await createWallet({ transport: 'popup', name: 'Popup Wallet' });
+
+    expect(mockPopup).toHaveBeenCalledWith('create', expect.anything());
+    expect(mockSetActiveHandle).toHaveBeenCalledWith('popup-handle', 'Popup Wallet', 'popup-cred');
+    expect(out).toEqual(popupResult);
+  });
+
+  it('does NOT persist when the ceremony is rejected', async () => {
+    mockPopup.mockRejectedValueOnce(new ConnectError('popup_closed'));
+
+    await expect(createWallet({ transport: 'popup' })).rejects.toMatchObject({
+      code: 'popup_closed',
+    });
+    expect(mockSetActiveHandle).not.toHaveBeenCalled();
   });
 });

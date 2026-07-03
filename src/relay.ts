@@ -13,7 +13,7 @@ import type {
 } from '@simplewebauthn/browser';
 import { shouldUsePopup, openCeremonyPopup } from './popup';
 import { createWallet, type CreateWalletConfig, type CreateWalletResult } from './enroll';
-import { getActiveHandle } from './walletStore';
+import { getActiveHandle, setActiveHandle } from './walletStore';
 
 const DEFAULT_API_BASE = 'https://api.dexter.cash';
 const ANON_SIGN_BASE = '/api/passkey-anon/sign';
@@ -38,10 +38,16 @@ export async function passkeyLogin(
   // Hosted-popup transport: on any non-Dexter origin, run the ceremony in a
   // popup on dexter.cash and get the same result back (works on any website).
   if (shouldUsePopup(config.transport)) {
-    return openCeremonyPopup<SignInResult>('signin', {
+    const result = await openCeremonyPopup<SignInResult>('signin', {
       connectHost: config.connectHost,
       apiBase: config.apiBase,
     });
+    // Persist the active handle so the SDK wallet store reflects the sign-in
+    // (guarded: a session without a vault leaves nothing to record).
+    if (result.vault) {
+      setActiveHandle(result.vault.userHandle, undefined, result.vault.credentialId);
+    }
+    return result;
   }
   if (!browserSupportsWebAuthn()) {
     throw new ConnectError('webauthn_unsupported', 'WebAuthn unavailable in this environment');
@@ -59,7 +65,13 @@ export async function passkeyLogin(
     throw new ConnectError('webauthn_failed', err instanceof Error ? err.message : String(err));
   }
   onPhase?.('verifying');
-  return submitLogin(apiBase, response);
+  const result = await submitLogin(apiBase, response);
+  // Persist the active handle on a successful inline sign-in (guarded: no vault,
+  // nothing to record — same discipline as the popup path above).
+  if (result.vault) {
+    setActiveHandle(result.vault.userHandle, undefined, result.vault.credentialId);
+  }
+  return result;
 }
 
 // ── Hybrid "continue" — register-or-sign-in in one call ──────────────────────
@@ -80,11 +92,20 @@ export async function continueWithDexter(
   // Off-origin: the popup on dexter.cash decides (it alone can see the dexter.cash
   // handle and attempt a discoverable sign-in); same call, result handed back.
   if (shouldUsePopup(config.transport)) {
-    return openCeremonyPopup<ContinueResult>('continue', {
+    const result = await openCeremonyPopup<ContinueResult>('continue', {
       connectHost: config.connectHost,
       name: config.name,
       apiBase: config.apiBase,
     });
+    // Persist the active handle for whichever branch the popup resolved. A create
+    // carries the identity at the top level (label from the caller's name); a
+    // signin only has one when the server returned a vault (guarded).
+    if (result.kind === 'create') {
+      setActiveHandle(result.handle, config.name, result.credentialId);
+    } else if (result.vault) {
+      setActiveHandle(result.vault.userHandle, undefined, result.vault.credentialId);
+    }
+    return result;
   }
   // Inline (on the Dexter origin): a known wallet handle on THIS device → sign it
   // in; otherwise register a fresh one (never the QR dead-end for a new user).

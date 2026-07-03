@@ -73,11 +73,16 @@ export async function createWallet(
   // Hosted-popup transport: on any non-Dexter origin, run the create ceremony in
   // a popup on dexter.cash and get the wallet back (works on any website).
   if (shouldUsePopup(config.transport)) {
-    return openCeremonyPopup<CreateWalletResult>('create', {
+    const result = await openCeremonyPopup<CreateWalletResult>('create', {
       connectHost: config.connectHost,
       name: config.name,
       apiBase: config.apiBase,
     });
+    // The ceremony ran on dexter.cash (its localStorage), so a third-party-origin
+    // create would otherwise leave THIS caller's store empty. Persist from the
+    // returned result on the caller's origin — label from the requested name.
+    setActiveHandle(result.handle, config.name, result.credentialId);
+    return result;
   }
   if (typeof navigator === 'undefined' || !navigator.credentials) {
     throw new ConnectError('webauthn_unsupported', 'WebAuthn unavailable in this environment');
