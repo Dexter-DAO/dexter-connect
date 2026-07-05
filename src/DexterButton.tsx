@@ -21,22 +21,21 @@ const BUTTON_CSS = `
 @keyframes dx-spin { to { transform: rotate(360deg); } }
 @keyframes dx-pulse { 0%,100% { opacity: 1; } 50% { opacity: .6; } }
 .dx-btn{
-  --dx-ember:#f26c18; --dx-ember-2:#ba3a00; --dx-fg:#fff4ea; --dx-radius:0px;
   position:relative; display:inline-flex; align-items:center; justify-content:center; gap:10px;
-  padding:11px 22px; border:1px solid color-mix(in srgb,var(--dx-ember) 55%,transparent);
-  border-radius:var(--dx-radius);
-  background:linear-gradient(135deg,var(--dx-ember),var(--dx-ember-2));
-  color:var(--dx-fg); font:inherit; font-weight:600; font-size:.78rem; letter-spacing:.12em;
+  padding:11px 22px; border:1px solid color-mix(in srgb,var(--dx-ember,#f26c18) 55%,transparent);
+  border-radius:var(--dx-radius,0px);
+  background:linear-gradient(135deg,var(--dx-ember,#f26c18),var(--dx-ember-2,#ba3a00));
+  color:var(--dx-fg,#fff4ea); font:inherit; font-weight:600; font-size:.78rem; letter-spacing:.12em;
   text-transform:uppercase; cursor:pointer; -webkit-tap-highlight-color:transparent;
-  box-shadow:0 14px 26px color-mix(in srgb,var(--dx-ember) 24%,transparent);
+  box-shadow:0 14px 26px color-mix(in srgb,var(--dx-ember,#f26c18) 24%,transparent);
   transition:transform .16s ease, box-shadow .16s ease, filter .16s ease, background .16s ease;
 }
-.dx-btn:hover{ transform:translateY(-1px); filter:brightness(1.07); box-shadow:0 20px 34px color-mix(in srgb,var(--dx-ember) 32%,transparent); }
-.dx-btn:active{ transform:translateY(0); filter:brightness(.97); box-shadow:0 8px 16px color-mix(in srgb,var(--dx-ember) 22%,transparent); }
-.dx-btn:focus-visible{ outline:none; box-shadow:0 0 0 3px color-mix(in srgb,var(--dx-ember) 38%,transparent); }
+.dx-btn:hover{ transform:translateY(-1px); filter:brightness(1.07); box-shadow:0 20px 34px color-mix(in srgb,var(--dx-ember,#f26c18) 32%,transparent); }
+.dx-btn:active{ transform:translateY(0); filter:brightness(.97); box-shadow:0 8px 16px color-mix(in srgb,var(--dx-ember,#f26c18) 22%,transparent); }
+.dx-btn:focus-visible{ outline:none; box-shadow:0 0 0 3px color-mix(in srgb,var(--dx-ember,#f26c18) 38%,transparent); }
 .dx-btn:disabled{ cursor:default; filter:saturate(.85) brightness(.98); }
-.dx-btn--secondary{ background:transparent; color:var(--dx-ember); box-shadow:none; border-color:color-mix(in srgb,var(--dx-ember) 45%,transparent); }
-.dx-btn--secondary:hover{ background:color-mix(in srgb,var(--dx-ember) 9%,transparent); filter:none; box-shadow:none; }
+.dx-btn--secondary{ background:transparent; color:var(--dx-ember,#f26c18); box-shadow:none; border-color:color-mix(in srgb,var(--dx-ember,#f26c18) 45%,transparent); }
+.dx-btn--secondary:hover{ background:color-mix(in srgb,var(--dx-ember,#f26c18) 9%,transparent); filter:none; box-shadow:none; }
 .dx-btn--block{ width:100%; }
 .dx-btn__mark{ flex-shrink:0; }
 .dx-btn__spin{ width:15px; height:15px; flex-shrink:0; border-radius:50%;
@@ -44,7 +43,7 @@ const BUTTON_CSS = `
   animation:dx-spin .7s linear infinite; }
 .dx-btn__doing{ animation:dx-pulse 1.4s ease-in-out infinite; }
 .dx-chip{ display:inline-flex; align-items:center; gap:8px; padding:6px 10px; font:inherit;
-  font-variant-numeric:tabular-nums; border-radius:var(--dx-radius,0);
+  font-variant-numeric:tabular-nums; border-radius:var(--dx-radius,0px);
   border:1px solid color-mix(in srgb,var(--dx-ember,#f26c18) 35%,transparent); }
 .dx-chip__dot{ width:7px; height:7px; border-radius:50%; background:var(--dx-ember,#f26c18); }
 .dx-chip__bal{ font-weight:600; opacity:.85; }
