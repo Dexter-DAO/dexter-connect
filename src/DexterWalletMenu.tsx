@@ -5,7 +5,7 @@ import { ensureWalletKitStyles } from './walletKitStyles';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DexterWalletMenu — the branded wallet dropdown for a passkey-vault wallet.
-// Identity header + actions (Manage / Save / Start fresh). Presentational: the
+// Identity header + actions (Manage / Save / Eject wallet). Presentational: the
 // consumer feeds the label and wires the action callbacks; the menu owns the
 // "Save your wallet" flip and reveals whatever sign-in UI the consumer slots in
 // (e.g. <SignInWithDexter/>). One branded wallet menu, every surface (Rule #7);
@@ -19,8 +19,10 @@ export interface DexterWalletMenuProps {
   avatarInitial?: string;
   /** "Manage wallet" → the consumer's wallet page. Row hidden if omitted. */
   onManageWallet?: () => void;
-  /** "Start fresh" → the consumer ejects/resets (guard + perform on its side). Row hidden if omitted. */
+  /** Eject row → the consumer ejects/resets (guard + perform on its side). Row hidden if omitted. */
   onStartFresh?: () => void;
+  /** Label for the eject/reset row. Default "Eject wallet". */
+  startFreshLabel?: string;
   /** Sign-in/save UI revealed when "Save your wallet" is tapped (e.g. <SignInWithDexter/>). Row hidden if omitted. */
   saveSlot?: ReactNode;
   /** Short hint shown above the save UI. */
@@ -31,7 +33,16 @@ export interface DexterWalletMenuProps {
 
 /** The branded wallet dropdown. */
 export function DexterWalletMenu(props: DexterWalletMenuProps): ReactElement {
-  const { walletLabel, avatarInitial, onManageWallet, onStartFresh, saveSlot, saveHint, className } = props;
+  const {
+    walletLabel,
+    avatarInitial,
+    onManageWallet,
+    onStartFresh,
+    startFreshLabel = 'Eject wallet',
+    saveSlot,
+    saveHint,
+    className,
+  } = props;
   useEffect(ensureWalletKitStyles, []);
   const [showSave, setShowSave] = useState(false);
 
@@ -85,7 +96,7 @@ export function DexterWalletMenu(props: DexterWalletMenuProps): ReactElement {
             className="dx-wmenu__item dx-wmenu__item--danger"
             onClick={onStartFresh}
           >
-            <span>Start fresh</span>
+            <span>{startFreshLabel}</span>
             <span className="dx-wmenu__icon" aria-hidden="true">⟵</span>
           </button>
         ) : null}
