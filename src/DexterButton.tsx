@@ -34,10 +34,28 @@ const BUTTON_CSS = `
 .dx-btn:active{ transform:translateY(0); filter:brightness(.97); box-shadow:0 8px 16px color-mix(in srgb,var(--dx-ember,#f26c18) 22%,transparent); }
 .dx-btn:focus-visible{ outline:none; box-shadow:0 0 0 3px color-mix(in srgb,var(--dx-ember,#f26c18) 38%,transparent); }
 .dx-btn:disabled{ cursor:default; filter:saturate(.85) brightness(.98); }
-.dx-btn--secondary{ background:transparent; color:var(--dx-ember,#f26c18); box-shadow:none; border-color:color-mix(in srgb,var(--dx-ember,#f26c18) 45%,transparent); }
-.dx-btn--secondary:hover{ background:color-mix(in srgb,var(--dx-ember,#f26c18) 9%,transparent); filter:none; box-shadow:none; }
-.dx-btn--danger{ background:transparent; color:var(--dx-danger,#b3261e); box-shadow:none; border-color:color-mix(in srgb,var(--dx-danger,#b3261e) 45%,transparent); }
-.dx-btn--danger:hover{ background:color-mix(in srgb,var(--dx-danger,#b3261e) 9%,transparent); filter:none; box-shadow:none; transform:none; }
+.dx-btn--secondary{
+  background:color-mix(in srgb,var(--dx-ember,#f26c18) 8%,transparent);
+  color:var(--dx-ember,#f26c18);
+  border-color:color-mix(in srgb,var(--dx-ember,#f26c18) 55%,transparent);
+  box-shadow:0 8px 18px color-mix(in srgb,var(--dx-ember,#f26c18) 10%,transparent);
+}
+.dx-btn--secondary:hover{
+  background:color-mix(in srgb,var(--dx-ember,#f26c18) 14%,transparent);
+  filter:none;
+  box-shadow:0 12px 22px color-mix(in srgb,var(--dx-ember,#f26c18) 16%,transparent);
+}
+.dx-btn--danger{
+  background:color-mix(in srgb,var(--dx-danger,#b3261e) 7%,transparent);
+  color:var(--dx-danger,#b3261e);
+  border-color:color-mix(in srgb,var(--dx-danger,#b3261e) 50%,transparent);
+  box-shadow:0 8px 18px color-mix(in srgb,var(--dx-danger,#b3261e) 10%,transparent);
+}
+.dx-btn--danger:hover{
+  background:color-mix(in srgb,var(--dx-danger,#b3261e) 13%,transparent);
+  filter:none;
+  box-shadow:0 12px 22px color-mix(in srgb,var(--dx-danger,#b3261e) 16%,transparent);
+}
 .dx-btn--danger:focus-visible{ box-shadow:0 0 0 3px color-mix(in srgb,var(--dx-danger,#b3261e) 38%,transparent); }
 .dx-btn--block{ width:100%; }
 .dx-btn__mark{ flex-shrink:0; }
