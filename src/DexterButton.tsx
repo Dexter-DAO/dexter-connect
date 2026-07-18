@@ -1,4 +1,4 @@
-import { useEffect, type ReactElement, type ReactNode } from 'react';
+import { useEffect, type ButtonHTMLAttributes, type ReactElement, type ReactNode } from 'react';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DexterButton — the ONE branded button. Presentational: the look + every state
@@ -36,6 +36,9 @@ const BUTTON_CSS = `
 .dx-btn:disabled{ cursor:default; filter:saturate(.85) brightness(.98); }
 .dx-btn--secondary{ background:transparent; color:var(--dx-ember,#f26c18); box-shadow:none; border-color:color-mix(in srgb,var(--dx-ember,#f26c18) 45%,transparent); }
 .dx-btn--secondary:hover{ background:color-mix(in srgb,var(--dx-ember,#f26c18) 9%,transparent); filter:none; box-shadow:none; }
+.dx-btn--danger{ background:transparent; color:var(--dx-danger,#b3261e); box-shadow:none; border-color:color-mix(in srgb,var(--dx-danger,#b3261e) 45%,transparent); }
+.dx-btn--danger:hover{ background:color-mix(in srgb,var(--dx-danger,#b3261e) 9%,transparent); filter:none; box-shadow:none; transform:none; }
+.dx-btn--danger:focus-visible{ box-shadow:0 0 0 3px color-mix(in srgb,var(--dx-danger,#b3261e) 38%,transparent); }
 .dx-btn--block{ width:100%; }
 .dx-btn__mark{ flex-shrink:0; }
 .dx-btn__spin{ width:15px; height:15px; flex-shrink:0; border-radius:50%;
@@ -86,15 +89,17 @@ export function DexterMark(): ReactElement {
   );
 }
 
-export interface DexterButtonProps {
+export interface DexterButtonProps
+  extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children' | 'onClick' | 'disabled' | 'className' | 'type'> {
   /** Button content (e.g. "Sign in with Dexter", "Create your Dexter Wallet"). */
   children?: ReactNode;
   /** Loading state: shows the animated spinner + `loadingLabel`, disables click. */
   loading?: boolean;
   /** Label shown next to the spinner while loading. Default "Connecting…". */
   loadingLabel?: string;
-  /** 'primary' = filled ember (default), 'secondary' = outline. */
-  variant?: 'primary' | 'secondary';
+  /** 'primary' = filled ember (default), 'secondary' = outline,
+   *  'danger' = outline in the danger color for destructive actions. */
+  variant?: 'primary' | 'secondary' | 'danger';
   /** Full-width (fills its container). */
   block?: boolean;
   /** Render the Dexter mark before the children. Default true. */
@@ -119,16 +124,24 @@ export function DexterButton(props: DexterButtonProps): ReactElement {
     disabled = false,
     className,
     type = 'button',
+    ...rest
   } = props;
   useEffect(ensureDexterButtonStyles, []);
 
   return (
     <button
       type={type}
-      className={cx('dx-btn', variant === 'secondary' && 'dx-btn--secondary', block && 'dx-btn--block', className)}
+      className={cx(
+        'dx-btn',
+        variant === 'secondary' && 'dx-btn--secondary',
+        variant === 'danger' && 'dx-btn--danger',
+        block && 'dx-btn--block',
+        className,
+      )}
       onClick={onClick}
       disabled={disabled || loading}
       aria-busy={loading}
+      {...rest}
     >
       {loading ? (
         <>
