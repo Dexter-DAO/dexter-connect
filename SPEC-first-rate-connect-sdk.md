@@ -9,6 +9,13 @@ vault <0.30 builds stale account lists for `finalize_withdrawal`/`settle_tab`/`s
 (typecheck/build/45 tests green on 0.30.0). (3) vault-review stood down 2026-07-01; its P0a.0 commission is VOID —
 P0a is owned end-to-end by connect-fable, hook deploy coordinated with api-fable. Execution order + owners:
 `PLAN-p0a-execution-2026-07-02.md`.
+**2026-07-18 v4 (x402gle-SIWD session, per Branch):** three consumer-truth additions from live forensics (Branch's
+eject incident, a full dexter-fe drift audit, x402gle adoption prep): NEW **P0c** (the recover verb — the missing
+wallet-only sign-in dexter-fe hand-rolled in its header), NEW **P1.4** (human-words copy contract + the eject split —
+the 0.20.0 default "Eject wallet" deletes the passkey from the OS credential manager while users read it as
+disconnect), and a new §6 row (verified-display chain truth in dexter-fe — World ID's once-per-human-per-action rule
+makes the stale "Verify with World App" button a permanent dead-end on every browser missing the localStorage hint).
+Priority order for x402gle (consumer #3, after board + dexter-fe): **P0c → P1.4 → P1.1, then x402gle installs.**
 **Why this exists:** the SDK was built bottom-up (0.1.0 → 0.16.0) with no design doc — only a README.
 The *vision* lives in `dexter-thesis/architecture/ROADMAP-the-approve-layer-consent-onramp-2026-06-18.md`,
 but that roadmap frames Sign-in-with-Dexter as a *dexter-fe surface to expose*, not as a *distributable
@@ -132,6 +139,25 @@ proven model: imperative DOM-mount (Stripe `elements.create().mount(node)`, Cler
 
   *Exit: a **Vue or plain-HTML** drop-in of `<dexter-signin>` — NOT the React board — proves the any-framework axis.*
 
+### P0c — The recover verb (added v4; the missing wallet-only sign-in)
+
+dexter-fe's header "Sign in with Dexter" — the most-used sign-in surface on dexter.cash — does not call the SDK.
+The SDK ships create + login (account tokens) but no wallet-only recover, so the fe hand-rolled the whole ceremony
+(`usePasskeyWalletAnon.ts:231-348`), including a self-labeled-temporary Chrome-149 immediate-UI WebAuthn bridge:
+SDK clothing (`DexterButton`) over a private ceremony. Textbook Rule-#7 drift, caused by a missing verb — the verb
+ships here, then the fork dies.
+
+- **P0c.1 — `recoverWallet({ preferImmediate? })`** (code name only; user-facing copy stays "Sign in with Dexter",
+  see P1.4): discoverable-credential assertion over `/api/passkey-anon/sign/recover-challenge` → `/recover-verify`
+  → `setActiveHandle()`. Mints NO account session — per the 2026-07-05 ruling the wallet IS the sign-in. Absorb the
+  immediate-UI bridge behind `preferImmediate` (instant no-passkey fast-fail on Chrome 149+); delete the bridge when
+  @simplewebauthn ships `uiMode` support.
+- **P0c.2 — thread it through `useSignInWithDexter` / `SignInWithDexter`** as a mode, so a header like dexter-fe's
+  (or x402gle's) is a component drop-in, not a bespoke composition.
+
+*Exit: dexter-fe's `NoWalletSignIn` drives the SDK verb and the fe's hand-rolled recover ceremony + bridge are
+DELETED in the same change (Rule #7 — the consumer migrates with the publish, never after).*
+
 ### P1 — Session lifecycle + theming contract + consent
 
 - **P1.1 — Session lifecycle on the NEW assertion, not GoTrue.**
@@ -152,6 +178,16 @@ proven model: imperative DOM-mount (Stripe `elements.create().mount(node)`, Cler
   passed in `popup.ts`). The hosted-popup origin owns keyboard nav, ARIA, validation, and anti-phishing — the
   trust+a11y boundary (Stripe-iframe model) consumers can't regress. **This is dexter-fe rendering work, a
   second consumer of the token format — track it as a cross-repo dependency (§6), not as a dexter-connect task.**
+- **P1.4 — Human-words copy contract + the eject split (added v4).** Two rules, enforced in SDK defaults.
+  (a) **No default string requires knowing what a passkey is.** "Recover", "eject", "credential", "assertion" never
+  reach a user; `ceremonyPhaseLabel`'s anti-hand-roll discipline extends to every user-facing default in the kit.
+  (b) **Disconnect and destroy are different verbs.** Today `eject` + the Signal-API prune removes the passkey from
+  the OS credential manager, while the 0.20.0 default menu row reads "Eject wallet" — Branch read it as disconnect
+  and lost a passkey to it (2026-07-17; an empty shell, nothing of value — this time). Split the surface: the default
+  row becomes disconnect/switch (reversible, no Signal prune, the passkey survives); permanent removal becomes a
+  separate action whose confirm says in plain words "this deletes the sign-in key from your device — you won't be
+  able to open this wallet from here again," and only THAT path prunes. Ship the relabel + split as one release so
+  no consumer ever renders the old default again.
 
 ### P2 — Surface the superpower (pulled forward; needs NEW primitives, not just UI)
 
@@ -220,6 +256,7 @@ limits). P2 drop-ins and all default copy must honor this — no credit/personho
 |---|---|---|---|
 | Ceremony **receiver page** (runs inline ceremony, postMessages result) | dexter-fe | **SHIPPED 2026-06-21** (d2d3835; live at dexter.cash/connect) | versions with the token format; second consumer of P0a.0 |
 | Consent surface (P1.3, "<origin> wants to sign in") | dexter-fe | P1.3 | rendering work; not a dexter-connect task — track separately |
+| Verified-display chain truth (v4): `VerifyInvite` shows "Verify with World App" on any browser lacking the localStorage hint, but World ID 4.0 = ONE verification per human per action EVER — for a verified human the button is a permanent dead-end. Display must trust the on-chain `vault.node` probe the component already runs. | dexter-fe | UX truth for every verified user on a second device | consumer-side fix, no SDK change; ~a dozen lines in `app/components/wallet/home/VerifyInvite.tsx` |
 | Token-mint + JWKS endpoint | dexter-api | P0a.0, P0a.1 | the assertion is minted here; JWKS served from dexter.cash |
 | **Agent-spend rail (swig surface)** | dexter-vault / program (grand-reveal + vault-review) | **all of P2** | agent-spend is migrating from backend-enforced caps to on-chain swig destination-limits (#18/#19) + per-agent `SubAccount`; P2 wraps the FINAL surface, not today's role-2 (grand-reveal ↔ vault-review, 2026-06-26) |
 
