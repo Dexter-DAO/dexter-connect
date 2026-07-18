@@ -24,6 +24,13 @@ export type { IdentityKind, IdentityInput, ResolvedIdentity } from './identity';
 // wallet) so any consumer can create one, not just dexter-fe.
 export { createWallet } from './enroll';
 export type { CreateWalletConfig, CreateWalletResult } from './enroll';
+// Wallet-only sign-in (P0c): re-point this browser at an existing wallet via a
+// discoverable passkey — NO account session (the wallet IS the sign-in,
+// 2026-07-05 ruling). This is the verb dexter-fe's header hand-rolled before
+// 0.21.0; the fork dies with this export (Rule #7). Fire on tap only — never
+// on mount. UI copy stays "Sign in with Dexter"; "recover" never reaches users.
+export { recoverWallet } from './recover';
+export type { RecoverOutcome, RecoverVault, RecoverWalletConfig } from './types';
 export type { CeremonyPhase } from './types';
 // Consent-at-birth policy helpers (Branch rulings 2026-07-02/03). The SINGLE
 // source for the fixed-30d TTL and the USD→atomic parse — consumers stop

@@ -44,6 +44,43 @@ export interface SignInResult {
  */
 export type CeremonyPhase = 'challenge' | 'passkey' | 'verifying' | 'finalizing';
 
+/**
+ * Vault identity on the wallet-only recover leg, as reported by
+ * /api/passkey-vault-anon/status. Narrower than ConnectVault on purpose —
+ * the status endpoint carries no publicKey/usdcAta, so a recover cannot
+ * construct a passkey signer; it re-points this browser at the wallet and
+ * lets useIdentity/useDexterWallet light the UI.
+ */
+export interface RecoverVault {
+  vaultPda: string;
+  /** Swig state address, base58 — the user-facing Dexter Wallet address. */
+  swigAddress: string;
+  /** Deposit address; null until the swig is deployed. */
+  receiveAddress: string | null;
+  isActivated: boolean;
+  walletLabel: string | null;
+}
+
+/**
+ * Result of a wallet-only recover ceremony. A discriminated RESULT, not a
+ * throw: user-cancel is a normal outcome in WebAuthn, and consumers branch on
+ * `reason` (no_credential → offer create; cancelled → stay silent; error →
+ * retry copy). `no_credential` covers both the immediate-mode instant
+ * rejection (no passkey on this device) and a verify 404 (a passkey the
+ * server has no row for).
+ */
+export type RecoverOutcome =
+  | { ok: true; userHandle: string; credentialId: string; vault: RecoverVault }
+  | { ok: false; reason: 'no_credential' | 'cancelled' | 'error'; error?: ConnectError };
+
+export interface RecoverWalletConfig extends DexterConnectConfig {
+  /** Chrome-149+ immediate UI mode: instant fast-fail when this device has no
+   *  discoverable passkey (no empty account-picker sheet). Falls back to the
+   *  normal modal wherever unsupported. */
+  preferImmediate?: boolean;
+  onPhase?: (phase: CeremonyPhase) => void;
+}
+
 export interface DexterConnectConfig {
   /** dexter-api base. Default https://api.dexter.cash. */
   apiBase?: string;

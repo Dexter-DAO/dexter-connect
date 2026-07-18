@@ -45,8 +45,8 @@ interface PopupResultMessage {
  * requestId nonce matches this call. Rejects on block / close / timeout / error.
  */
 export function openCeremonyPopup<T>(
-  op: 'signin' | 'create' | 'continue',
-  config: { connectHost?: string; name?: string; apiBase?: string } = {},
+  op: 'signin' | 'create' | 'continue' | 'recover',
+  config: { connectHost?: string; name?: string; apiBase?: string; preferImmediate?: boolean } = {},
 ): Promise<T> {
   if (typeof window === 'undefined') {
     return Promise.reject(new ConnectError('not_browser', 'popup ceremony requires a browser'));
@@ -59,6 +59,7 @@ export function openCeremonyPopup<T>(
   const params = new URLSearchParams({ v: '1', op, requestId, origin: openerOrigin });
   if (config.name) params.set('name', config.name);
   if (config.apiBase) params.set('apiBase', config.apiBase);
+  if (config.preferImmediate) params.set('preferImmediate', '1');
   const url = `${host}?${params.toString()}`;
 
   return new Promise<T>((resolve, reject) => {
