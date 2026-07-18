@@ -1,12 +1,22 @@
 import { useEffect, type ReactElement } from 'react';
 import { useSignInWithDexter, type UseSignInWithDexterConfig } from './useSignInWithDexter';
-import type { SignInResult, ConnectError } from './types';
+import type { SignInResult, ConnectError, RecoverOutcome } from './types';
 import { DexterButton, ensureDexterButtonStyles, cx } from './DexterButton';
 import { ceremonyPhaseLabel } from './phase';
 
 export interface SignInWithDexterProps extends UseSignInWithDexterConfig {
+  /** 'signin' (default) = full sign-in minting the account session.
+   *  'recover' = wallet-only: re-points this browser at an existing wallet and
+   *  mints NOTHING else (the wallet IS the sign-in). After a successful
+   *  recover the element renders null — identity display belongs to
+   *  DexterWalletChip/useIdentity, which light up via the wallet store. */
+  mode?: 'signin' | 'recover';
   /** Fired with the result the moment sign-in completes. */
   onSuccess?: (result: SignInResult) => void;
+  /** Recover mode: fired with EVERY settled outcome (ok, no_credential,
+   *  cancelled, error) — the single channel; onError is not used in this mode.
+   *  Branch on `reason`: no_credential → offer create; cancelled → stay silent. */
+  onRecovered?: (outcome: RecoverOutcome) => void;
   /** Fired with the typed error if the ceremony fails. */
   onError?: (error: ConnectError) => void;
   /** Button label when signed out. Default "Sign in with Dexter". */
@@ -39,8 +49,10 @@ function formatUsd(n: number): string {
  */
 export function SignInWithDexter(props: SignInWithDexterProps): ReactElement | null {
   const {
+    mode = 'signin',
     onSuccess,
     onError,
+    onRecovered,
     label = 'Sign in with Dexter',
     variant = 'primary',
     block = false,
@@ -52,12 +64,21 @@ export function SignInWithDexter(props: SignInWithDexterProps): ReactElement | n
   const c = useSignInWithDexter(config);
 
   const handleClick = async () => {
+    if (mode === 'recover') {
+      // Result-shaped: recover() never throws; the outcome is the one channel.
+      onRecovered?.(await c.recover());
+      return;
+    }
     try {
       onSuccess?.(await c.signIn());
     } catch (err) {
       onError?.(err as ConnectError);
     }
   };
+
+  // Wallet-only success: this element's job is done — the header chip
+  // (DexterWalletChip over useIdentity) is already lit via the wallet store.
+  if (mode === 'recover' && c.recovered?.ok) return null;
 
   if (c.isVaultConnected) {
     if (!showConnectedChip) return null;

@@ -9,6 +9,9 @@ export type {
 
 export { SignInWithDexter } from './SignInWithDexter';
 export type { SignInWithDexterProps } from './SignInWithDexter';
+// Recover-mode outcome types re-exported here so a react-only consumer never
+// needs a second import from the root entry (Rule #7 — one obvious path).
+export type { RecoverOutcome, RecoverVault } from './types';
 
 // The one branded button — used by SignInWithDexter and by the wallet create
 // flow (wire it to your own action). One button, many surfaces (Rule #7).

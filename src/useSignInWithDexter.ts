@@ -1,10 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { DexterApiBrowserPasskeySigner } from '@dexterai/vault/signers/browser';
 import { passkeyLogin } from './relay';
+import { recoverWallet } from './recover';
 import { fetchUsdcBalance } from './balance';
 import { createPasskeySigner } from './signer';
 import { ConnectError } from './types';
-import type { ConnectVault, PasskeyLoginTokens, SignInResult, CeremonyPhase } from './types';
+import type {
+  ConnectVault,
+  PasskeyLoginTokens,
+  SignInResult,
+  CeremonyPhase,
+  RecoverOutcome,
+} from './types';
 
 /** Dexter's Helius proxy — authoritative for browser Solana reads. */
 const DEFAULT_RPC = 'https://api.dexter.cash/proxy/helius/rpc';
@@ -16,6 +23,16 @@ export interface UseSignInWithDexterConfig {
   apiBase?: string;
   /** RPC for the connected-chip balance read. Default: Dexter's Helius proxy. */
   rpcUrl?: string;
+  /** Ceremony transport (both verbs). 'auto' (default) = inline on dexter.cash,
+   *  popup anywhere else. Exposed so tests/staging can force a leg —
+   *  CreateWalletPanel already had this knob; the sign-in surface was the odd
+   *  one out. */
+  transport?: 'auto' | 'popup' | 'inline';
+  /** Hosted ceremony page for the popup transport. Default dexter.cash/connect. */
+  connectHost?: string;
+  /** Chrome-149+ immediate UI mode for the wallet-only verb: instant fast-fail
+   *  when this device holds no passkey. Ignored by signIn(). */
+  preferImmediate?: boolean;
 }
 
 export interface UseSignInWithDexter {
@@ -27,6 +44,14 @@ export interface UseSignInWithDexter {
   /** Run the ceremony. Resolves with the result; throws ConnectError on failure
    *  (error is also captured in `error` + `status==='error'` for declarative UI). */
   signIn: () => Promise<SignInResult>;
+  /** Wallet-only sign-in (P0c): re-points this browser at an existing wallet,
+   *  mints NO session. Returns a discriminated outcome — cancel is a normal
+   *  result, never a throw. Identity surfaces (useIdentity/useDexterWallet)
+   *  light up via the wallet store; `session`/`vault` here stay null. Fire on
+   *  tap only — never on mount (iOS gesture rule). */
+  recover: () => Promise<RecoverOutcome>;
+  /** Last recover outcome; null until recover() settles. */
+  recovered: RecoverOutcome | null;
   disconnect: () => void;
   session: PasskeyLoginTokens | null;
   vault: ConnectVault | null;
@@ -55,13 +80,14 @@ export interface UseSignInWithDexter {
 export function useSignInWithDexter(
   config: UseSignInWithDexterConfig = {},
 ): UseSignInWithDexter {
-  const { apiBase, rpcUrl = DEFAULT_RPC } = config;
+  const { apiBase, rpcUrl = DEFAULT_RPC, transport, connectHost, preferImmediate } = config;
   const [status, setStatus] = useState<ConnectStatus>('idle');
   const [phase, setPhase] = useState<CeremonyPhase | null>(null);
   const [session, setSession] = useState<PasskeyLoginTokens | null>(null);
   const [vault, setVault] = useState<ConnectVault | null>(null);
   const [usdcBalance, setUsdcBalance] = useState<number | null>(null);
   const [error, setError] = useState<ConnectError | null>(null);
+  const [recovered, setRecovered] = useState<RecoverOutcome | null>(null);
 
   const refreshBalance = useCallback(async () => {
     const ata = vault?.usdcAta;
@@ -74,7 +100,14 @@ export function useSignInWithDexter(
     setPhase(null);
     setStatus('pending');
     try {
-      const result = await passkeyLogin(apiBase ? { apiBase } : {}, setPhase);
+      const result = await passkeyLogin(
+        {
+          ...(apiBase ? { apiBase } : {}),
+          ...(transport ? { transport } : {}),
+          ...(connectHost ? { connectHost } : {}),
+        },
+        setPhase,
+      );
       setSession(result.session);
       setVault(result.vault ?? null);
       setStatus('done');
@@ -88,13 +121,40 @@ export function useSignInWithDexter(
       setPhase(null);
       throw e;
     }
-  }, [apiBase]);
+  }, [apiBase, transport, connectHost]);
+
+  const recover = useCallback(async (): Promise<RecoverOutcome> => {
+    setError(null);
+    setPhase(null);
+    setStatus('pending');
+    const outcome = await recoverWallet({
+      ...(apiBase ? { apiBase } : {}),
+      ...(transport ? { transport } : {}),
+      ...(connectHost ? { connectHost } : {}),
+      ...(preferImmediate ? { preferImmediate } : {}),
+      onPhase: setPhase,
+    });
+    setPhase(null);
+    setRecovered(outcome);
+    if (outcome.ok) {
+      setStatus('done');
+    } else if (outcome.reason === 'error') {
+      setError(outcome.error ?? new ConnectError('recover_failed'));
+      setStatus('error');
+    } else {
+      // no_credential / cancelled are normal user outcomes, not failures —
+      // back to idle so the button is immediately tappable again.
+      setStatus('idle');
+    }
+    return outcome;
+  }, [apiBase, transport, connectHost, preferImmediate]);
 
   const disconnect = useCallback(() => {
     setSession(null);
     setVault(null);
     setUsdcBalance(null);
     setError(null);
+    setRecovered(null);
     setStatus('idle');
   }, []);
 
@@ -116,6 +176,8 @@ export function useSignInWithDexter(
     phase,
     isVaultConnected: status === 'done' && vault !== null,
     signIn,
+    recover,
+    recovered,
     disconnect,
     session,
     vault,
