@@ -157,10 +157,42 @@ import { VerifyPersonhood } from '@dexterai/connect/worldid';
 `useVerifyPersonhood` is the headless version. Requires the optional
 `@worldcoin/idkit` peer.
 
+## Wallet-only sign-in (no account session)
+
+`recoverWallet` re-points a browser at an existing Dexter Wallet — the wallet
+IS the sign-in; nothing else is minted. Use it when your surface treats the
+wallet as the identity (the dexter.cash header does exactly this):
+
+```ts
+import { recoverWallet } from '@dexterai/connect';
+
+const outcome = await recoverWallet({ preferImmediate: true }); // fire on TAP, never on mount
+if (outcome.ok) {
+  // outcome.vault.swigAddress, outcome.vault.walletLabel — the store + every
+  // useIdentity/useDexterWallet surface is already updated.
+} else if (outcome.reason === 'no_credential') {
+  // this device has no wallet passkey → offer your create flow
+} else if (outcome.reason === 'cancelled') {
+  // the user dismissed the sheet → stay silent
+}
+```
+
+It returns a discriminated outcome instead of throwing: user cancel is a
+normal result in WebAuthn, not an exception. `preferImmediate` uses Chrome
+149+'s immediate UI mode to fast-fail instantly when the device holds no
+passkey (no empty account-picker sheet); everywhere else it falls back to the
+normal modal. Works from any website — off dexter.cash the ceremony runs in
+the hosted popup automatically.
+
+React: `<SignInWithDexter mode="recover" preferImmediate onRecovered={…} />`
+(after a successful recover the element renders null — show identity with
+`DexterWalletChip` over `useIdentity`), or `useSignInWithDexter().recover()`.
+
 ## Wallet lifecycle
 
 - `createWallet` mints a brand-new named passkey + vault; `passkeyLogin` signs
-  an existing one in; `continueWithDexter` resumes a known wallet.
+  an existing one in; `continueWithDexter` resumes a known wallet;
+  `recoverWallet` restores the wallet with no account session.
 - The **wallet store** (`getActiveHandle`, `listWallets`, `switchWallet`,
   `ejectActiveWallet`, `forgetWallet`, `subscribeWallet`) is the canonical
   owner of the active-wallet handle. Read and write through it rather than

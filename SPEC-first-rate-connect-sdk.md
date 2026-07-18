@@ -139,7 +139,15 @@ proven model: imperative DOM-mount (Stripe `elements.create().mount(node)`, Cler
 
   *Exit: a **Vue or plain-HTML** drop-in of `<dexter-signin>` — NOT the React board — proves the any-framework axis.*
 
-### P0c — The recover verb (added v4; the missing wallet-only sign-in)
+### P0c — The recover verb (added v4; the missing wallet-only sign-in) — **SHIPPED 0.21.0, 2026-07-18**
+
+**Shipped:** `recoverWallet({ preferImmediate?, transport?, connectHost?, apiBase?, onPhase? })` returning a
+discriminated `RecoverOutcome` (ok | no_credential | cancelled | error — cancel is a result, not a throw);
+immediate-UI bridge absorbed into `src/immediate.ts`; popup transport `op=recover` (+`preferImmediate` param);
+react threading via `useSignInWithDexter().recover()` + `<SignInWithDexter mode="recover" onRecovered>`. Two
+improvements over the fe donor: persistence happens only AFTER vault confirmation (kills the vaultless-handle
+quirk), and the roster row carries walletLabel + credentialId (donor dropped both). Consumer migration + fork
+deletion tracked in the plan (docs/superpowers/plans/2026-07-18-p0c-recover-verb.md).
 
 dexter-fe's header "Sign in with Dexter" — the most-used sign-in surface on dexter.cash — does not call the SDK.
 The SDK ships create + login (account tokens) but no wallet-only recover, so the fe hand-rolled the whole ceremony
