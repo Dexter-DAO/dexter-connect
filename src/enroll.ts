@@ -29,6 +29,7 @@ import { setActiveHandle } from './walletStore';
 import { shouldUsePopup, openCeremonyPopup } from './popup';
 import { SESSION_TTL_30D } from './policy';
 import type { SpendPolicy } from './policy';
+import { readErrorCode } from './httpError';
 
 const DEFAULT_API_BASE = 'https://api.dexter.cash';
 const DEFAULT_RP_ID = 'dexter.cash';
@@ -209,13 +210,3 @@ async function initializeVault(
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Read the server's snake_case `error` field; fall back to an http_<status> code. */
-async function readErrorCode(res: Response): Promise<string> {
-  try {
-    const body = (await res.json()) as { error?: string };
-    if (body?.error) return body.error;
-  } catch {
-    // non-JSON body — fall through
-  }
-  return `http_${res.status}`;
-}
