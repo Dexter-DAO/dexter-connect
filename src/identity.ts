@@ -27,6 +27,9 @@ export interface IdentityInput {
   accountToken: string | null;
   /** The passkey-vault user handle (the connect wallet store), else null. */
   userHandle: string | null;
+  /** The active wallet's display name from the connect wallet store (persisted
+   *  at sign-in/recover/rename), else null. Browser-only input like the handle. */
+  walletLabel?: string | null;
 }
 
 export interface ResolvedIdentity {
@@ -34,6 +37,10 @@ export interface ResolvedIdentity {
   kind: IdentityKind;
   /** Passkey-vault identity (FIRST-CLASS): the wallet handle, or null. */
   userHandle: string | null;
+  /** The wallet's human display name, or null when the wallet was never named
+   *  (or no wallet is active). Display surfaces prefer this over any synthetic
+   *  account identifier — a user should never be shown a generated email. */
+  walletLabel: string | null;
   /** Account identity (secondary/legacy axis): bearer for account-scoped fetches, or null. */
   accountToken: string | null;
   /** A passkey vault is present on this device. */
@@ -51,6 +58,8 @@ function presentOrNull(value: string | null): string | null {
 export function resolveIdentity(input: IdentityInput): ResolvedIdentity {
   const userHandle = presentOrNull(input.userHandle);
   const accountToken = presentOrNull(input.accountToken);
+  // Label only means something when a wallet is actually active.
+  const walletLabel = userHandle ? presentOrNull(input.walletLabel ?? null) : null;
 
   const hasPasskeyVault = userHandle !== null;
   const hasAccount = accountToken !== null;
@@ -63,5 +72,5 @@ export function resolveIdentity(input: IdentityInput): ResolvedIdentity {
       ? 'account'
       : 'none';
 
-  return { kind, userHandle, accountToken, hasPasskeyVault, hasAccount, hasWallet };
+  return { kind, userHandle, walletLabel, accountToken, hasPasskeyVault, hasAccount, hasWallet };
 }

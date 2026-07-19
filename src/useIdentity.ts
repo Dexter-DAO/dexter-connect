@@ -20,14 +20,16 @@ export interface UseIdentityConfig {
 }
 
 export function useIdentity({ accountToken }: UseIdentityConfig): ResolvedIdentity {
-  const { activeHandle } = useDexterWallet();
+  const { activeHandle, activeWallet } = useDexterWallet();
+  const walletLabel = activeWallet?.label ?? null;
 
   return useMemo(
     () =>
       resolveIdentity({
         accountToken: accountToken ?? null,
         userHandle: activeHandle ?? null,
+        walletLabel,
       }),
-    [accountToken, activeHandle],
+    [accountToken, activeHandle, walletLabel],
   );
 }

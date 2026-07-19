@@ -46,7 +46,7 @@ export async function passkeyLogin(
     // Persist the active handle so the SDK wallet store reflects the sign-in
     // (guarded: a session without a vault leaves nothing to record).
     if (result.vault) {
-      setActiveHandle(result.vault.userHandle, undefined, result.vault.credentialId);
+      setActiveHandle(result.vault.userHandle, result.vault.walletLabel ?? undefined, result.vault.credentialId);
     }
     return result;
   }
@@ -70,7 +70,7 @@ export async function passkeyLogin(
   // Persist the active handle on a successful inline sign-in (guarded: no vault,
   // nothing to record — same discipline as the popup path above).
   if (result.vault) {
-    setActiveHandle(result.vault.userHandle, undefined, result.vault.credentialId);
+    setActiveHandle(result.vault.userHandle, result.vault.walletLabel ?? undefined, result.vault.credentialId);
   }
   return result;
 }
@@ -104,7 +104,7 @@ export async function continueWithDexter(
     if (result.kind === 'create') {
       setActiveHandle(result.handle, config.name, result.credentialId);
     } else if (result.vault) {
-      setActiveHandle(result.vault.userHandle, undefined, result.vault.credentialId);
+      setActiveHandle(result.vault.userHandle, result.vault.walletLabel ?? undefined, result.vault.credentialId);
     }
     return result;
   }

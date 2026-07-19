@@ -13,6 +13,7 @@ describe('resolveIdentity — the WHO combiner (browser state only, no facts)', 
     expect(resolveIdentity({ accountToken: null, userHandle: null })).toEqual({
       kind: 'none',
       userHandle: null,
+      walletLabel: null,
       accountToken: null,
       hasPasskeyVault: false,
       hasAccount: false,
@@ -24,6 +25,7 @@ describe('resolveIdentity — the WHO combiner (browser state only, no facts)', 
     expect(resolveIdentity({ accountToken: null, userHandle: 'handle-abc' })).toEqual({
       kind: 'passkey-vault',
       userHandle: 'handle-abc',
+      walletLabel: null,
       accountToken: null,
       hasPasskeyVault: true,
       hasAccount: false,
@@ -35,6 +37,7 @@ describe('resolveIdentity — the WHO combiner (browser state only, no facts)', 
     expect(resolveIdentity({ accountToken: 'jwt-xyz', userHandle: null })).toEqual({
       kind: 'account',
       userHandle: null,
+      walletLabel: null,
       accountToken: 'jwt-xyz',
       hasPasskeyVault: false,
       hasAccount: true,
@@ -46,6 +49,7 @@ describe('resolveIdentity — the WHO combiner (browser state only, no facts)', 
     expect(resolveIdentity({ accountToken: 'jwt-xyz', userHandle: 'handle-abc' })).toEqual({
       kind: 'passkey-vault',
       userHandle: 'handle-abc',
+      walletLabel: null,
       accountToken: 'jwt-xyz',
       hasPasskeyVault: true,
       hasAccount: true,
@@ -57,10 +61,31 @@ describe('resolveIdentity — the WHO combiner (browser state only, no facts)', 
     expect(resolveIdentity({ accountToken: '', userHandle: '' })).toEqual({
       kind: 'none',
       userHandle: null,
+      walletLabel: null,
       accountToken: null,
       hasPasskeyVault: false,
       hasAccount: false,
       hasWallet: false,
     });
+  });
+
+  it('wallet label rides identity when a wallet is active (first-class name)', () => {
+    expect(
+      resolveIdentity({ accountToken: null, userHandle: 'handle-abc', walletLabel: 'BranchWallet' }),
+    ).toEqual({
+      kind: 'passkey-vault',
+      userHandle: 'handle-abc',
+      walletLabel: 'BranchWallet',
+      accountToken: null,
+      hasPasskeyVault: true,
+      hasAccount: false,
+      hasWallet: true,
+    });
+  });
+
+  it('label without an active wallet is discarded (no orphan names)', () => {
+    expect(
+      resolveIdentity({ accountToken: 'jwt-xyz', userHandle: null, walletLabel: 'Stale' }).walletLabel,
+    ).toBeNull();
   });
 });

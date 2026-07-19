@@ -28,6 +28,11 @@ export interface ConnectVault {
   publicKey: string;
   userHandle: string;
   credentialId: string;
+  /** The wallet's cross-device display name (user-authored via rename), or
+   *  null when never named. Identity is first-class: every sign-in carries
+   *  the human name so no consumer ever falls back to a synthetic email.
+   *  Optional for wire-compat with servers/popup pages predating 0.23. */
+  walletLabel?: string | null;
 }
 
 /** Result of a completed "Sign in with Dexter" ceremony. */

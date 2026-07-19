@@ -85,7 +85,10 @@ export function SignInWithDexter(props: SignInWithDexterProps): ReactElement | n
     return (
       <span className={cx('dx-chip', className)}>
         <span className="dx-chip__dot" aria-hidden />
-        <span>{c.vaultAddress ? shortAddress(c.vaultAddress) : 'Connected'}</span>
+        <span>
+          {c.vault?.walletLabel ??
+            (c.vaultAddress ? shortAddress(c.vaultAddress) : 'Connected')}
+        </span>
         {c.usdcBalance !== null && (
           <span className="dx-chip__bal">{formatUsd(c.usdcBalance)} available</span>
         )}

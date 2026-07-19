@@ -31,6 +31,10 @@ const NO_SUPPORT: PasskeySignalSupport = { rename: false, prune: false, syncAcce
 export interface UseDexterWallet {
   /** Active wallet handle, or null if this browser has no active wallet. */
   activeHandle: string | null;
+  /** The active wallet's roster entry (handle + label + credentialId), or
+   *  null. `activeWallet.label` is the wallet's human name — identity is
+   *  first-class, so display surfaces read it here instead of re-fetching. */
+  activeWallet: StoredWallet | null;
   /** Known wallets on this browser, most-recently-used first. */
   wallets: StoredWallet[];
   /** What the WebAuthn Signal API supports in THIS browser (rename / prune). */
@@ -90,6 +94,7 @@ export function useDexterWallet(): UseDexterWallet {
 
   return {
     activeHandle,
+    activeWallet: activeHandle ? wallets.find((w) => w.handle === activeHandle) ?? null : null,
     wallets,
     support,
     eject,
