@@ -40,7 +40,10 @@ const APPINSTALL_CSS = `
 .dx-appbtn:active{ transform:translateY(0); }
 .dx-appbtn:focus-visible{ outline:none; box-shadow:0 0 0 3px color-mix(in srgb,var(--dx-ember,#f26c18) 38%,transparent); }
 .dx-appbtn--block{ width:100%; justify-content:flex-start; }
-.dx-appbtn__logo{ width:18px; height:18px; display:block; flex:none; }
+.dx-appbtn__logo{
+  width:22px; height:22px; display:block; flex:none; box-sizing:border-box;
+  background:#fff; padding:3px; border-radius:var(--dx-radius,0px);
+}
 .dx-appbtn__copied{ color:var(--dx-ember,#f26c18); }
 `;
 
