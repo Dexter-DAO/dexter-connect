@@ -165,3 +165,42 @@ describe('createWallet — popup persistence', () => {
     expect(mockSetActiveHandle).not.toHaveBeenCalled();
   });
 });
+
+describe('createWallet — name-at-birth on the /initialize body', () => {
+  beforeEach(() => {
+    mockStartReg.mockResolvedValue(regResponse);
+    vi.stubGlobal('navigator', { credentials: {} });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+  });
+
+  it('sends the chosen name as label and echoes the server-confirmed label on the result', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => challengeResp })
+      .mockResolvedValueOnce({ ok: true, json: async () => enrolledResp })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ ...initResp, walletLabel: 'voice test' }),
+      });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await createWallet({ transport: 'inline', name: 'voice test' });
+
+    expect(initBody(fetchMock).label).toBe('voice test');
+    expect(result.label).toBe('voice test');
+    expect(result.vault.walletLabel).toBe('voice test');
+  });
+
+  it('omits label when no name is chosen; result.label is null', async () => {
+    const fetchMock = mockCeremonyFetch();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await createWallet({ transport: 'inline' });
+
+    expect(initBody(fetchMock)).not.toHaveProperty('label');
+    expect(result.label).toBeNull();
+  });
+});

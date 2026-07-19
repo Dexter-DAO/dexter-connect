@@ -102,7 +102,8 @@ export async function continueWithDexter(
     // carries the identity at the top level (label from the caller's name); a
     // signin only has one when the server returned a vault (guarded).
     if (result.kind === 'create') {
-      setActiveHandle(result.handle, config.name, result.credentialId);
+      // The result's label wins — the name may have been typed on the hosted page.
+      setActiveHandle(result.handle, result.label ?? config.name, result.credentialId);
     } else if (result.vault) {
       setActiveHandle(result.vault.userHandle, result.vault.walletLabel ?? undefined, result.vault.credentialId);
     }
