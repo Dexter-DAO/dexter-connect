@@ -18,7 +18,7 @@ describe('AppInstallButtons — install-link builders', () => {
     const link = cursorInstallUrl('opendexter', url);
     expect(link.startsWith('cursor://anysphere.cursor-deeplink/mcp/install?name=opendexter&config=')).toBe(true);
     const b64 = decodeURIComponent(link.split('config=')[1]);
-    expect(JSON.parse(Buffer.from(b64, 'base64').toString())).toEqual({ url });
+    expect(JSON.parse(atob(b64))).toEqual({ url });
   });
 
   it('vscode: documented vscode:mcp/install with URL-encoded stringified config', () => {

@@ -80,9 +80,8 @@ const DEFAULT_NAME = 'opendexter';
 const ALL_APPS: InstallApp[] = ['cursor', 'vscode', 'hermes', 'claude-code'];
 
 export function cursorInstallUrl(name: string, mcpUrl: string): string {
-  const config = typeof btoa === 'function'
-    ? btoa(JSON.stringify({ url: mcpUrl }))
-    : Buffer.from(JSON.stringify({ url: mcpUrl })).toString('base64');
+  // btoa is global in every browser and in Node 16+ (test env included).
+  const config = btoa(JSON.stringify({ url: mcpUrl }));
   return `cursor://anysphere.cursor-deeplink/mcp/install?name=${encodeURIComponent(name)}&config=${encodeURIComponent(config)}`;
 }
 
