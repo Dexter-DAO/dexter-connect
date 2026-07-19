@@ -93,7 +93,10 @@ export function vscodeInstallUrl(name: string, mcpUrl: string): string {
 }
 
 export function hermesInstallCommand(name: string, mcpUrl: string): string {
-  return `hermes mcp add ${name} --url ${mcpUrl} --auth oauth`;
+  // No --auth flag: verified against Hermes 0.18.2 (2026-07-19) — its SDK auth
+  // module is absent, so oauth prints a failure then falls back anyway. The
+  // hosted MCP guides the user into real wallet enrollment on first use.
+  return `hermes mcp add ${name} --url ${mcpUrl}`;
 }
 
 export function claudeCodeInstallCommand(name: string, mcpUrl: string): string {

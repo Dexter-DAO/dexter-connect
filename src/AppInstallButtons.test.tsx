@@ -28,9 +28,9 @@ describe('AppInstallButtons — install-link builders', () => {
     expect(JSON.parse(json)).toEqual({ name: 'opendexter', type: 'http', url });
   });
 
-  it('hermes: the CLI add command with oauth on first connect', () => {
+  it('hermes: the CLI add command, no auth flag (verified against 0.18.2)', () => {
     expect(hermesInstallCommand('opendexter', url)).toBe(
-      `hermes mcp add opendexter --url ${url} --auth oauth`,
+      `hermes mcp add opendexter --url ${url}`,
     );
   });
 
