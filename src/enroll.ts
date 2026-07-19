@@ -60,6 +60,10 @@ export interface CreateWalletResult {
   credentialId: string;
   /** The freshly initialized vault (swig not yet deployed; deploys lazily). */
   vault: ConnectVault;
+  /** Wallet name recorded at birth (server-confirmed via /initialize). Rides
+   *  the result so a popup-typed name reaches the OPENER's wallet store —
+   *  before 0.23.2 it lived only on the popup origin. null = unnamed. */
+  label: string | null;
 }
 
 /**
@@ -81,8 +85,9 @@ export async function createWallet(
     });
     // The ceremony ran on dexter.cash (its localStorage), so a third-party-origin
     // create would otherwise leave THIS caller's store empty. Persist from the
-    // returned result on the caller's origin — label from the requested name.
-    setActiveHandle(result.handle, config.name, result.credentialId);
+    // returned result on the caller's origin — the result's label wins (the
+    // user may have typed the name on the hosted page, not in our config).
+    setActiveHandle(result.handle, result.label ?? config.name, result.credentialId);
     return result;
   }
   if (typeof navigator === 'undefined' || !navigator.credentials) {
@@ -120,6 +125,7 @@ export async function createWallet(
     enrolled.userHandle,
     enrolled.credentialId,
     config.spendPolicy,
+    config.name?.trim() || undefined,
   );
 
   // Record in the canonical store — the label matches the passkey's keychain
@@ -139,7 +145,9 @@ export async function createWallet(
       publicKey: enrolled.publicKey,
       userHandle: enrolled.userHandle,
       credentialId: enrolled.credentialId,
+      walletLabel: init.walletLabel ?? config.name?.trim() ?? null,
     },
+    label: init.walletLabel ?? config.name?.trim() ?? null,
   };
 }
 
@@ -183,8 +191,17 @@ async function initializeVault(
   userHandle: string,
   credentialId: string,
   spendPolicy?: SpendPolicy,
-): Promise<{ vaultPda: string; receiveAddress: string | null; swigStateAddress: string }> {
+  label?: string,
+): Promise<{
+  vaultPda: string;
+  receiveAddress: string | null;
+  swigStateAddress: string;
+  walletLabel?: string | null;
+}> {
   const body: Record<string, unknown> = { userHandle, credentialId, coolingOffSeconds: 0 };
+  // Name-at-birth: the chosen wallet name becomes the server-side wallet_label
+  // (write-once here; renames go through the assertion-gated /label route).
+  if (label) body.label = label;
   // Consent-at-birth: when the user authored an allowance, it rides here (same
   // wire slot as coolingOffSeconds). The TTL is ruled fixed 30d and never
   // user-editable — overwrite whatever the caller's object carries with

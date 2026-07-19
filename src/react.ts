@@ -46,3 +46,12 @@ export { AllowanceChips } from './AllowanceChips';
 export type { AllowanceChipsProps } from './AllowanceChips';
 export { CreateWalletPanel } from './CreateWalletPanel';
 export type { CreateWalletPanelProps } from './CreateWalletPanel';
+
+export {
+  AppInstallButtons,
+  cursorInstallUrl,
+  vscodeInstallUrl,
+  hermesInstallCommand,
+  claudeCodeInstallCommand,
+} from './AppInstallButtons';
+export type { AppInstallButtonsProps, InstallApp } from './AppInstallButtons';
