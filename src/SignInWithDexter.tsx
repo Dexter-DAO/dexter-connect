@@ -25,6 +25,8 @@ export interface SignInWithDexterProps extends UseSignInWithDexterConfig {
   variant?: 'primary' | 'secondary';
   /** Full-width button. */
   block?: boolean;
+  /** 'md' (default) or 'sm' — the mini header variant of the button. */
+  size?: 'md' | 'sm';
   /** Extra className composed after the brand classes. Prefer overriding the
    *  `--dx-*` CSS variables for theming. */
   className?: string;
@@ -56,6 +58,7 @@ export function SignInWithDexter(props: SignInWithDexterProps): ReactElement | n
     label = 'Sign in with Dexter',
     variant = 'primary',
     block = false,
+    size = 'md',
     className,
     showConnectedChip = true,
     ...config
@@ -105,6 +108,7 @@ export function SignInWithDexter(props: SignInWithDexterProps): ReactElement | n
       loadingLabel={c.phase ? ceremonyPhaseLabel(c.phase) : 'Connecting…'}
       variant={variant}
       block={block}
+      size={size}
       className={className}
       onClick={handleClick}
     >

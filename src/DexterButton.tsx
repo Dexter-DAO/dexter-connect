@@ -58,6 +58,13 @@ const BUTTON_CSS = `
 }
 .dx-btn--danger:focus-visible{ box-shadow:0 0 0 3px color-mix(in srgb,var(--dx-danger,#b3261e) 38%,transparent); }
 .dx-btn--block{ width:100%; }
+.dx-btn--sm{
+  padding:7px 14px; gap:7px; font-size:.66rem; letter-spacing:.1em;
+  box-shadow:0 8px 16px color-mix(in srgb,var(--dx-ember,#f26c18) 18%,transparent);
+}
+.dx-btn--sm:hover{ box-shadow:0 12px 22px color-mix(in srgb,var(--dx-ember,#f26c18) 26%,transparent); }
+.dx-btn--sm .dx-btn__mark{ width:14px; height:14px; }
+.dx-btn--sm .dx-btn__spin{ width:12px; height:12px; }
 .dx-btn__mark{ flex-shrink:0; }
 .dx-btn__spin{ width:15px; height:15px; flex-shrink:0; border-radius:50%;
   border:2px solid color-mix(in srgb,currentColor 30%,transparent); border-top-color:currentColor;
@@ -120,6 +127,10 @@ export interface DexterButtonProps
   variant?: 'primary' | 'secondary' | 'danger';
   /** Full-width (fills its container). */
   block?: boolean;
+  /** 'md' (default) = the standard CTA. 'sm' = the mini header/chip-row
+   *  variant: tighter padding, smaller type and mark. Same states, same
+   *  theming — never hand-shrink the md button with a className. */
+  size?: 'md' | 'sm';
   /** Render the Dexter mark before the children. Default true. */
   withMark?: boolean;
   onClick?: () => void;
@@ -137,6 +148,7 @@ export function DexterButton(props: DexterButtonProps): ReactElement {
     loadingLabel = 'Connecting…',
     variant = 'primary',
     block = false,
+    size = 'md',
     withMark = true,
     onClick,
     disabled = false,
@@ -154,6 +166,7 @@ export function DexterButton(props: DexterButtonProps): ReactElement {
         variant === 'secondary' && 'dx-btn--secondary',
         variant === 'danger' && 'dx-btn--danger',
         block && 'dx-btn--block',
+        size === 'sm' && 'dx-btn--sm',
         className,
       )}
       onClick={onClick}
