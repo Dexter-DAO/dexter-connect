@@ -1,6 +1,6 @@
 {
   "name": "@dexterai/connect",
-  "version": "0.24.4",
+  "version": "0.25.0",
   "description": "Sign in with Dexter — passkey connector. Composes @dexterai/vault.",
   "type": "module",
   "exports": {

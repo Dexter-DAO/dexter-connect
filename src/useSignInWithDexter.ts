@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { DexterApiBrowserPasskeySigner } from '@dexterai/vault/signers/browser';
-import { passkeyLogin } from './relay';
+import { passkeyLogin, continueWithDexter, type ContinueResult } from './relay';
 import { recoverWallet } from './recover';
 import { fetchUsdcBalance } from './balance';
 import { createPasskeySigner } from './signer';
@@ -50,6 +50,10 @@ export interface UseSignInWithDexter {
    *  light up via the wallet store; `session`/`vault` here stay null. Fire on
    *  tap only — never on mount (iOS gesture rule). */
   recover: () => Promise<RecoverOutcome>;
+  /** One-button register-or-sign-in (keychain-first; see continueWithDexter).
+   *  Terminal kinds update session/vault state; needs_create / needs_choice /
+   *  cancelled return with status back at idle for the caller to route. */
+  continueWith: () => Promise<ContinueResult>;
   /** Last recover outcome; null until recover() settles. */
   recovered: RecoverOutcome | null;
   disconnect: () => void;
@@ -149,6 +153,43 @@ export function useSignInWithDexter(
     return outcome;
   }, [apiBase, transport, connectHost, preferImmediate]);
 
+  const continueWith = useCallback(async (): Promise<ContinueResult> => {
+    setError(null);
+    setPhase(null);
+    setStatus('pending');
+    try {
+      const result = await continueWithDexter(
+        {
+          ...(apiBase ? { apiBase } : {}),
+          ...(transport ? { transport } : {}),
+          ...(connectHost ? { connectHost } : {}),
+        },
+        setPhase,
+      );
+      setPhase(null);
+      if (result.kind === 'signin') {
+        setSession(result.session);
+        setVault(result.vault ?? null);
+        setStatus('done');
+      } else if (result.kind === 'create') {
+        setVault(result.vault);
+        setStatus('done');
+      } else {
+        // needs_create / needs_choice / cancelled — normal outcomes, back to
+        // idle so the button is immediately tappable again.
+        setStatus('idle');
+      }
+      return result;
+    } catch (err) {
+      const e =
+        err instanceof ConnectError ? err : new ConnectError('continue_failed', String(err));
+      setError(e);
+      setStatus('error');
+      setPhase(null);
+      throw e;
+    }
+  }, [apiBase, transport, connectHost]);
+
   const disconnect = useCallback(() => {
     setSession(null);
     setVault(null);
@@ -177,6 +218,7 @@ export function useSignInWithDexter(
     isVaultConnected: status === 'done' && vault !== null,
     signIn,
     recover,
+    continueWith,
     recovered,
     disconnect,
     session,

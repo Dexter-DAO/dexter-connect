@@ -1,5 +1,6 @@
 import { useEffect, type ReactElement } from 'react';
 import { useSignInWithDexter, type UseSignInWithDexterConfig } from './useSignInWithDexter';
+import type { ContinueResult } from './relay';
 import type { SignInResult, ConnectError, RecoverOutcome } from './types';
 import { DexterButton, ensureDexterButtonStyles, cx } from './DexterButton';
 import { ceremonyPhaseLabel } from './phase';
@@ -9,14 +10,21 @@ export interface SignInWithDexterProps extends UseSignInWithDexterConfig {
    *  'recover' = wallet-only: re-points this browser at an existing wallet and
    *  mints NOTHING else (the wallet IS the sign-in). After a successful
    *  recover the element renders null — identity display belongs to
-   *  DexterWalletChip/useIdentity, which light up via the wallet store. */
-  mode?: 'signin' | 'recover';
+   *  DexterWalletChip/useIdentity, which light up via the wallet store.
+   *  'continue' = the one-button register-or-sign-in (keychain-first): the
+   *  hosted popup decides sign-in vs create; every settled outcome fires
+   *  onContinue. */
+  mode?: 'signin' | 'recover' | 'continue';
   /** Fired with the result the moment sign-in completes. */
   onSuccess?: (result: SignInResult) => void;
   /** Recover mode: fired with EVERY settled outcome (ok, no_credential,
    *  cancelled, error) — the single channel; onError is not used in this mode.
    *  Branch on `reason`: no_credential → offer create; cancelled → stay silent. */
   onRecovered?: (outcome: RecoverOutcome) => void;
+  /** Continue mode: fired with EVERY settled ContinueResult (signin, create,
+   *  needs_create, needs_choice, cancelled) — the single channel for routing.
+   *  Real ceremony failures still go to onError. */
+  onContinue?: (result: ContinueResult) => void;
   /** Fired with the typed error if the ceremony fails. */
   onError?: (error: ConnectError) => void;
   /** Button label when signed out. Default "Sign in with Dexter". */
@@ -55,6 +63,7 @@ export function SignInWithDexter(props: SignInWithDexterProps): ReactElement | n
     onSuccess,
     onError,
     onRecovered,
+    onContinue,
     label = 'Sign in with Dexter',
     variant = 'primary',
     block = false,
@@ -70,6 +79,14 @@ export function SignInWithDexter(props: SignInWithDexterProps): ReactElement | n
     if (mode === 'recover') {
       // Result-shaped: recover() never throws; the outcome is the one channel.
       onRecovered?.(await c.recover());
+      return;
+    }
+    if (mode === 'continue') {
+      try {
+        onContinue?.(await c.continueWith());
+      } catch (err) {
+        onError?.(err as ConnectError);
+      }
       return;
     }
     try {

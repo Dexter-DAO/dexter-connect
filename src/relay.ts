@@ -15,9 +15,20 @@ import { shouldUsePopup, openCeremonyPopup } from './popup';
 import { createWallet, type CreateWalletConfig, type CreateWalletResult } from './enroll';
 import { getActiveHandle, setActiveHandle } from './walletStore';
 import { readErrorCode } from './httpError';
+import {
+  classifyWebAuthnRejection,
+  immediateAuthentication,
+  immediateGetSupported,
+  primeImmediateSupport,
+} from './immediate';
 
 const DEFAULT_API_BASE = 'https://api.dexter.cash';
 const ANON_SIGN_BASE = '/api/passkey-anon/sign';
+
+// Settle the immediate-mode capability probe at module load so continue's
+// tap-time read never inserts an await before navigator.credentials.get()
+// (same discipline as recover.ts).
+primeImmediateSupport();
 
 /**
  * "Sign in with Dexter" — the discoverable-credential login ceremony.
@@ -76,22 +87,44 @@ export async function passkeyLogin(
 }
 
 // ── Hybrid "continue" — register-or-sign-in in one call ──────────────────────
-// dexter-agents approved op=continue ALONGSIDE signin|create (back-compat). The
-// CALLER no longer pre-decides — this does, so one "Sign in with Dexter" button
-// works for both a brand-new user and a returning one (like "Sign in with
-// Google" creates if you're new). Critically, a new user must NOT dead-end at
-// the discoverable-credential cross-device QR: when this device has no known
-// wallet handle, we REGISTER rather than attempt a resident-key sign-in.
+// One "Sign in with Dexter" button serves both a returning user and a brand-new
+// one (like "Sign in with Google" creates if you're new). The decision is
+// KEYCHAIN-FIRST, never localStorage-first: a synced passkey on a fresh device
+// has no local handle, and guessing "create" there silently mints a second
+// wallet and orphans the funded one (the exact bug fe's NoWalletSignIn killed).
+//
+// Decision rule (inline path — the hosted popup runs this on dexter.cash):
+//   1. Immediate mode supported (Chrome 149+/Android): probe the KEYCHAIN with
+//      an immediate discoverable login. Passkey exists → full sign-in, done.
+//      Instant fast-fail → this device truly has no passkey → create path.
+//   2. No immediate support (iOS today) + a local handle → modal sign-in (a
+//      passkey existed here; safe).
+//   3. No immediate support + no local handle → we CANNOT probe silently.
+//      Return needs_choice: the caller renders an explicit sign-in / create
+//      fork. The verb never guess-creates.
+//
+// Consent-at-birth: the create leg runs ONLY when the caller already authored
+// a spendPolicy (fail-closed, same rule as the hosted page). Without one the
+// verb returns needs_create and the caller collects name + allowance first.
 export type ContinueResult =
   | ({ kind: 'signin' } & SignInResult)
-  | ({ kind: 'create' } & CreateWalletResult);
+  | ({ kind: 'create' } & CreateWalletResult)
+  /** This device has no passkey (proven by an immediate fast-fail) but the
+   *  caller supplied no authored spendPolicy — collect name + allowance,
+   *  then call createWallet. */
+  | { kind: 'needs_create' }
+  /** Cannot silently probe (no immediate support, no local handle): render an
+   *  explicit "Sign in" / "I'm new" choice. Never guess. */
+  | { kind: 'needs_choice' }
+  /** The user dismissed the passkey sheet. Not an error — stay quiet. */
+  | { kind: 'cancelled' };
 
 export async function continueWithDexter(
   config: CreateWalletConfig = {},
   onPhase?: (phase: CeremonyPhase) => void,
 ): Promise<ContinueResult> {
-  // Off-origin: the popup on dexter.cash decides (it alone can see the dexter.cash
-  // handle and attempt a discoverable sign-in); same call, result handed back.
+  // Off-origin: the popup on dexter.cash decides (it alone can see the
+  // dexter.cash keychain/handle); only terminal outcomes ride back.
   if (shouldUsePopup(config.transport)) {
     const result = await openCeremonyPopup<ContinueResult>('continue', {
       connectHost: config.connectHost,
@@ -99,24 +132,76 @@ export async function continueWithDexter(
       apiBase: config.apiBase,
     });
     // Persist the active handle for whichever branch the popup resolved. A create
-    // carries the identity at the top level (label from the caller's name); a
-    // signin only has one when the server returned a vault (guarded).
+    // carries the identity at the top level; a signin only has one when the
+    // server returned a vault (guarded). Non-terminal kinds carry no identity.
     if (result.kind === 'create') {
       // The result's label wins — the name may have been typed on the hosted page.
       setActiveHandle(result.handle, result.label ?? config.name, result.credentialId);
-    } else if (result.vault) {
+    } else if (result.kind === 'signin' && result.vault) {
       setActiveHandle(result.vault.userHandle, result.vault.walletLabel ?? undefined, result.vault.credentialId);
     }
     return result;
   }
-  // Inline (on the Dexter origin): a known wallet handle on THIS device → sign it
-  // in; otherwise register a fresh one (never the QR dead-end for a new user).
+
+  // Inline — keychain-first probe.
+  if (await immediateGetSupported()) {
+    const probe = await immediatePasskeyLogin(config, onPhase);
+    if (probe.outcome === 'signin') return { kind: 'signin', ...probe.result };
+    if (probe.outcome === 'cancelled') return { kind: 'cancelled' };
+    // outcome === 'no_credential' — proven empty device; create needs consent.
+    if (!config.spendPolicy) return { kind: 'needs_create' };
+    const created = await createWallet({ ...config, onPhase });
+    return { kind: 'create', ...created };
+  }
+
+  // No immediate support: a local handle proves a passkey lived here — the
+  // modal discoverable login is safe. Without one, ask; never guess.
   if (getActiveHandle()) {
     const result = await passkeyLogin(config, onPhase);
     return { kind: 'signin', ...result };
   }
-  const result = await createWallet({ ...config, onPhase });
-  return { kind: 'create', ...result };
+  return { kind: 'needs_choice' };
+}
+
+/** Immediate-mode discoverable login: the keychain probe that doubles as the
+ *  full sign-in when a passkey exists. Fast-fails without UI when the device
+ *  holds none. Same legs as passkeyLogin, immediate mediation. */
+async function immediatePasskeyLogin(
+  config: DexterConnectConfig,
+  onPhase?: (phase: CeremonyPhase) => void,
+): Promise<
+  | { outcome: 'signin'; result: SignInResult }
+  | { outcome: 'no_credential' }
+  | { outcome: 'cancelled' }
+> {
+  const apiBase = (config.apiBase ?? DEFAULT_API_BASE).replace(/\/$/, '');
+  onPhase?.('challenge');
+  const options = await fetchLoginChallenge(apiBase);
+  onPhase?.('passkey');
+  let response: AuthenticationResponseJSON;
+  try {
+    response = await immediateAuthentication(options);
+  } catch (err) {
+    if (classifyWebAuthnRejection(err)) {
+      // Immediate mode rejects instantly when the device holds no discoverable
+      // passkey; a rejection after the sheet showed is the user dismissing.
+      // The API can't distinguish the two — both are a no-sign outcome, and
+      // no_credential is the safe reading (the caller offers create, which
+      // the user can decline; a swallowed cancel would dead-end a new user).
+      return { outcome: 'no_credential' };
+    }
+    throw new ConnectError('webauthn_failed', err instanceof Error ? err.message : String(err));
+  }
+  onPhase?.('verifying');
+  const result = await submitLogin(apiBase, response);
+  if (result.vault) {
+    setActiveHandle(
+      result.vault.userHandle,
+      result.vault.walletLabel ?? undefined,
+      result.vault.credentialId,
+    );
+  }
+  return { outcome: 'signin', result };
 }
 
 async function fetchLoginChallenge(

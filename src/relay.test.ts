@@ -265,3 +265,120 @@ describe('continueWithDexter — popup persistence', () => {
     expect(mockSetActiveHandle).not.toHaveBeenCalled();
   });
 });
+
+// ── continueWithDexter inline — the keychain-first decision rule ─────────────
+// localStorage presence is NOT identity: these pin the rule that a synced
+// passkey on a fresh device signs in (probe) and is never guess-created over.
+vi.mock('./immediate', () => ({
+  immediateGetSupported: vi.fn(async () => false),
+  immediateAuthentication: vi.fn(),
+  classifyWebAuthnRejection: vi.fn(() => false),
+  primeImmediateSupport: vi.fn(),
+}));
+vi.mock('./enroll', () => ({
+  createWallet: vi.fn(),
+}));
+
+import {
+  immediateGetSupported,
+  immediateAuthentication,
+  classifyWebAuthnRejection,
+} from './immediate';
+import { createWallet } from './enroll';
+import { getActiveHandle } from './walletStore';
+
+const mockImmSupported = vi.mocked(immediateGetSupported);
+const mockImmAuth = vi.mocked(immediateAuthentication);
+const mockClassify = vi.mocked(classifyWebAuthnRejection);
+const mockCreate = vi.mocked(createWallet);
+const mockGetHandle = vi.mocked(getActiveHandle);
+
+const vaultWithLabel = { ...fullVault, walletLabel: 'voice test' };
+
+describe('continueWithDexter — keychain-first inline decisions', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+  });
+
+  it('immediate probe finds a passkey → full sign-in, label persisted (fresh-device case)', async () => {
+    mockImmSupported.mockResolvedValue(true);
+    mockImmAuth.mockResolvedValue(authResponse);
+    mockGetHandle.mockReturnValue(null); // empty localStorage — must NOT create
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => challengeResp })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ ...tokensResp, vault: vaultWithLabel }) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await continueWithDexter({ transport: 'inline' });
+
+    expect(result.kind).toBe('signin');
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(mockSetActiveHandle).toHaveBeenCalledWith('u-handle', 'voice test', 'c-id');
+  });
+
+  it('immediate fast-fail without an authored spendPolicy → needs_create (no consent, no birth)', async () => {
+    mockImmSupported.mockResolvedValue(true);
+    mockImmAuth.mockRejectedValue(new DOMException('no credential', 'NotAllowedError'));
+    mockClassify.mockReturnValue(true);
+    const fetchMock = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => challengeResp });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await continueWithDexter({ transport: 'inline' });
+
+    expect(result.kind).toBe('needs_create');
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it('immediate fast-fail WITH an authored spendPolicy → auto-create', async () => {
+    mockImmSupported.mockResolvedValue(true);
+    mockImmAuth.mockRejectedValue(new DOMException('no credential', 'NotAllowedError'));
+    mockClassify.mockReturnValue(true);
+    mockCreate.mockResolvedValue({
+      handle: 'new-h',
+      credentialId: 'new-c',
+      vault: { ...fullVault, walletLabel: 'fresh' },
+      label: 'fresh',
+    });
+    const fetchMock = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => challengeResp });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await continueWithDexter({
+      transport: 'inline',
+      spendPolicy: { spendLimitAtomic: '5000000', sessionTtlSeconds: 2592000 },
+    });
+
+    expect(result.kind).toBe('create');
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it('no immediate support + a local handle → modal sign-in (passkey lived here)', async () => {
+    mockImmSupported.mockResolvedValue(false);
+    mockGetHandle.mockReturnValue('local-h');
+    mockSupports.mockReturnValue(true);
+    mockStartAuth.mockResolvedValue(authResponse);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => challengeResp })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ ...tokensResp, vault: vaultWithLabel }) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await continueWithDexter({ transport: 'inline' });
+
+    expect(result.kind).toBe('signin');
+    expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it('no immediate support + no local handle → needs_choice, never guess-create', async () => {
+    mockImmSupported.mockResolvedValue(false);
+    mockGetHandle.mockReturnValue(null);
+    vi.stubGlobal('fetch', vi.fn());
+
+    const result = await continueWithDexter({ transport: 'inline' });
+
+    expect(result.kind).toBe('needs_choice');
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(mockStartAuth).not.toHaveBeenCalled();
+  });
+});
