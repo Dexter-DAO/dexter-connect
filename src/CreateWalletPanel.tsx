@@ -35,7 +35,7 @@ export interface CreateWalletPanelProps {
 }
 
 const FINE_PRINT =
-  'Your number, your tap. Agents can never spend past it, and you can revoke any time.';
+  'Agents can never spend past it, and you can revoke anytime.';
 
 /** The turnkey consent-at-birth create panel. */
 export function CreateWalletPanel(props: CreateWalletPanelProps): ReactElement {

@@ -68,7 +68,7 @@ describe('CreateWalletPanel — composition', () => {
     expect(container.textContent).toContain('Name your wallet');
     expect(container.textContent).toContain('What agents may spend, per 30 days');
     expect(container.textContent).toContain(
-      'Your number, your tap. Agents can never spend past it, and you can revoke any time.',
+      'Agents can never spend past it, and you can revoke anytime.',
     );
     const name = container.querySelector('input[maxlength="40"]') as HTMLInputElement | null;
     expect(name).not.toBeNull();
