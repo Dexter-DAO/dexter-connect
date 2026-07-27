@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactElement } from 'react';
+import { useEffect, useId, useState, type ReactElement } from 'react';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AppInstallButtons — put an MCP server into the user's agent app with one
@@ -6,17 +6,18 @@ import { useEffect, useRef, useState, type ReactElement } from 'react';
 // row (Rule #7): one component, real app marks, themeable via --dx-* vars,
 // placeable on any surface.
 //
-// Mechanisms, verified from primary sources 2026-07-19:
+// Mechanisms, re-verified from primary sources and current local clients
+// 2026-07-27:
 //  - Cursor   cursor://anysphere.cursor-deeplink/mcp/install?name&config(base64)
 //             (cursor.com/docs/mcp/install-links)
 //  - VS Code  vscode:mcp/install?{URL-encoded JSON.stringify({name,type,url})}
 //             (code.visualstudio.com/api/extension-guides/ai/mcp)
-//  - Hermes   copies `hermes mcp add <name> --url <url> --auth oauth`, then
-//             launches the app via its registered hermes:// protocol handler
-//             (NousResearch/hermes-agent apps/desktop). The deep link focuses
-//             the app; the paste is the install until Hermes honors an mcp
-//             deep-link kind.
-//  - Claude Code  copies `claude mcp add --transport http <name> <url>`.
+//  - Hermes   copies `hermes mcp add <name> --url <url> --auth oauth`.
+//             Its hermes://open/<name> handler launches/focuses the desktop
+//             app, but does not install the MCP; that remains a separate,
+//             explicitly labeled action after the command is copied.
+//  - Claude Code  copies a user-scoped HTTP MCP command. Remote OAuth is
+//                 completed from Claude Code's native /mcp flow when needed.
 //
 // Interaction contract: every action is labeled with exactly what it does,
 // nothing navigates by surprise, copy actions confirm visibly.
@@ -29,22 +30,70 @@ const APPINSTALL_CSS = `
 .dx-appinstall--block{ flex-direction:column; }
 .dx-appbtn{
   display:inline-flex; align-items:center; gap:10px;
-  padding:10px 16px; border:1px solid var(--dx-appbtn-border, rgba(255,255,255,.14));
+  min-height:44px; padding:10px 16px; border:1px solid var(--dx-appbtn-border, rgba(255,255,255,.14));
   border-radius:var(--dx-radius,0px);
   background:var(--dx-appbtn-bg, rgba(8,8,8,.55));
   color:var(--dx-appbtn-fg, #f4ece0); font:inherit; font-weight:600; font-size:.84rem;
   cursor:pointer; text-decoration:none; -webkit-tap-highlight-color:transparent;
-  transition:border-color .16s ease, background .16s ease, transform .16s ease;
+  transition:border-color .1s ease-out, background-color .1s ease-out, transform .1s ease-out;
 }
-.dx-appbtn:hover{ border-color:color-mix(in srgb,var(--dx-ember,#f26c18) 55%,transparent); transform:translateY(-1px); }
-.dx-appbtn:active{ transform:translateY(0); }
-.dx-appbtn:focus-visible{ outline:none; box-shadow:0 0 0 3px color-mix(in srgb,var(--dx-ember,#f26c18) 38%,transparent); }
+.dx-appbtn:active{ transform:translateY(1px); }
+.dx-appbtn:disabled{ cursor:wait; opacity:.72; transform:none; }
+.dx-appbtn:focus-visible{
+  outline:2px solid var(--dx-ember,#f26c18); outline-offset:3px;
+}
 .dx-appbtn--block{ width:100%; justify-content:flex-start; }
 .dx-appbtn__logo{
   width:22px; height:22px; display:block; flex:none; box-sizing:border-box;
   background:#fff; padding:3px; border-radius:var(--dx-radius,0px);
 }
 .dx-appbtn__copied{ color:var(--dx-ember,#f26c18); }
+.dx-appinstall__notice{
+  flex-basis:100%; display:flex; align-items:center; flex-wrap:wrap; gap:8px 12px;
+  color:var(--dx-appbtn-fg,#f4ece0); font:inherit; font-size:.82rem; line-height:1.45;
+}
+.dx-appinstall__notice p{ margin:0; }
+.dx-appinstall__open{
+  display:inline-flex; align-items:center; min-height:44px; padding:0 10px;
+  color:var(--dx-ember,#f26c18); font-weight:700; text-underline-offset:3px;
+}
+.dx-appinstall__open:focus-visible{
+  outline:2px solid var(--dx-ember,#f26c18); outline-offset:3px;
+}
+.dx-appinstall__error{
+  flex-basis:100%; display:grid; gap:8px; margin:0;
+  color:var(--dx-danger,#e5552e); font:inherit; font-size:.82rem; line-height:1.45;
+}
+.dx-appinstall__error label{ font-weight:700; }
+.dx-appinstall__command{
+  width:100%; min-height:44px; box-sizing:border-box; padding:10px 12px;
+  border:1px solid color-mix(in srgb,var(--dx-danger,#e5552e) 55%,transparent);
+  border-radius:var(--dx-radius,0px); background:var(--dx-appbtn-bg,rgba(8,8,8,.55));
+  color:var(--dx-appbtn-fg,#f4ece0); font:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font-size:.78rem;
+}
+.dx-appinstall__command:focus-visible{
+  outline:2px solid var(--dx-ember,#f26c18); outline-offset:3px;
+}
+.dx-appinstall__sr-only{
+  position:absolute; width:1px; height:1px; padding:0; margin:-1px;
+  overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0;
+}
+@media (hover:hover) and (pointer:fine){
+  .dx-appbtn:hover{
+    border-color:color-mix(in srgb,var(--dx-ember,#f26c18) 55%,transparent);
+    transform:translateY(-1px);
+  }
+}
+@media (max-width:560px){
+  .dx-appinstall{ display:grid; grid-template-columns:minmax(0,1fr); }
+  .dx-appbtn{ width:100%; justify-content:flex-start; }
+  .dx-appinstall__notice,.dx-appinstall__error{ min-width:0; }
+}
+@media (prefers-reduced-motion:reduce){
+  .dx-appbtn{ transition:none; }
+  .dx-appbtn:hover,.dx-appbtn:active{ transform:none; }
+}
 `;
 
 export function ensureAppInstallStyles(): void {
@@ -93,14 +142,15 @@ export function vscodeInstallUrl(name: string, mcpUrl: string): string {
 }
 
 export function hermesInstallCommand(name: string, mcpUrl: string): string {
-  // No --auth flag: verified against Hermes 0.18.2 (2026-07-19) — its SDK auth
-  // module is absent, so oauth prints a failure then falls back anyway. The
-  // hosted MCP guides the user into real wallet enrollment on first use.
-  return `hermes mcp add ${name} --url ${mcpUrl}`;
+  return `hermes mcp add ${name} --url ${mcpUrl} --auth oauth`;
+}
+
+export function hermesOpenUrl(name: string): string {
+  return `hermes://open/${encodeURIComponent(name)}`;
 }
 
 export function claudeCodeInstallCommand(name: string, mcpUrl: string): string {
-  return `claude mcp add --transport http ${name} ${mcpUrl}`;
+  return `claude mcp add --scope user --transport http ${name} ${mcpUrl}`;
 }
 
 async function copyText(text: string): Promise<boolean> {
@@ -112,23 +162,13 @@ async function copyText(text: string): Promise<boolean> {
   }
 }
 
-function useCopied(): [copied: boolean, mark: () => void] {
-  const [copied, setCopied] = useState(false);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(
-    () => () => {
-      if (timer.current) clearTimeout(timer.current);
-    },
-    [],
-  );
-  return [
-    copied,
-    () => {
-      setCopied(true);
-      if (timer.current) clearTimeout(timer.current);
-      timer.current = setTimeout(() => setCopied(false), 2600);
-    },
-  ];
+type CopyStatus = 'idle' | 'copying' | 'copied' | 'failed';
+
+function useCopyStatus(): [status: CopyStatus, mark: (next: Exclude<CopyStatus, 'idle'>) => void] {
+  const [status, setStatus] = useState<CopyStatus>('idle');
+  // Keep the outcome stable. In particular, never remove the focused
+  // launch/focus link from under a keyboard user after an arbitrary timer.
+  return [status, (next) => setStatus(next)];
 }
 
 function appCx(block: boolean): string {
@@ -145,8 +185,13 @@ export function AppInstallButtons(props: AppInstallButtonsProps): ReactElement {
     onAction,
   } = props;
   useEffect(ensureAppInstallStyles, []);
-  const [hermesCopied, markHermes] = useCopied();
-  const [claudeCopied, markClaude] = useCopied();
+  const statusId = useId();
+  const hermesCommand = hermesInstallCommand(serverName, mcpUrl);
+  const claudeCommand = claudeCodeInstallCommand(serverName, mcpUrl);
+  const [hermesStatus, markHermes] = useCopyStatus();
+  const [claudeStatus, markClaude] = useCopyStatus();
+  const hermesErrorId = `${statusId}-hermes-error`;
+  const claudeErrorId = `${statusId}-claude-error`;
 
   const buttons: Partial<Record<InstallApp, ReactElement>> = {
     cursor: (
@@ -176,18 +221,27 @@ export function AppInstallButtons(props: AppInstallButtonsProps): ReactElement {
         key="hermes"
         type="button"
         className={appCx(block)}
+        disabled={hermesStatus === 'copying'}
+        aria-busy={hermesStatus === 'copying'}
+        aria-describedby={hermesStatus === 'failed' ? hermesErrorId : undefined}
         onClick={async () => {
-          if (await copyText(hermesInstallCommand(serverName, mcpUrl))) {
-            markHermes();
+          markHermes('copying');
+          if (await copyText(hermesCommand)) {
+            markHermes('copied');
             onAction?.('hermes', 'copied');
+          } else {
+            markHermes('failed');
           }
-          // Launch/focus the installed app in the same user gesture; a quiet
-          // no-op in most browsers when Hermes isn't installed.
-          window.location.href = `hermes://open/${encodeURIComponent(serverName)}`;
         }}
       >
         <img className="dx-appbtn__logo" src={HERMES_MARK} alt="" aria-hidden />
-        {hermesCopied ? <span className="dx-appbtn__copied">Copied. Paste it in Hermes</span> : 'Copy for Hermes'}
+        {hermesStatus === 'copied'
+          ? <span className="dx-appbtn__copied">Copied. Run it in your terminal</span>
+          : hermesStatus === 'copying'
+            ? 'Copying OAuth setup…'
+          : hermesStatus === 'failed'
+            ? 'Try copying for Hermes'
+            : 'Copy OAuth setup for Hermes'}
       </button>
     ),
     'claude-code': (
@@ -195,22 +249,90 @@ export function AppInstallButtons(props: AppInstallButtonsProps): ReactElement {
         key="claude-code"
         type="button"
         className={appCx(block)}
+        disabled={claudeStatus === 'copying'}
+        aria-busy={claudeStatus === 'copying'}
+        aria-describedby={claudeStatus === 'failed' ? claudeErrorId : undefined}
         onClick={async () => {
-          if (await copyText(claudeCodeInstallCommand(serverName, mcpUrl))) {
-            markClaude();
+          markClaude('copying');
+          if (await copyText(claudeCommand)) {
+            markClaude('copied');
             onAction?.('claude-code', 'copied');
+          } else {
+            markClaude('failed');
           }
         }}
       >
         <img className="dx-appbtn__logo" src={CLAUDE_MARK} alt="" aria-hidden />
-        {claudeCopied ? <span className="dx-appbtn__copied">Copied. Run it in your terminal</span> : 'Copy for Claude Code'}
+        {claudeStatus === 'copied'
+          ? <span className="dx-appbtn__copied">Copied. Run it in your terminal</span>
+          : claudeStatus === 'copying'
+            ? 'Copying setup…'
+          : claudeStatus === 'failed'
+            ? 'Try copying for Claude Code'
+            : 'Copy for Claude Code'}
       </button>
     ),
   };
 
   return (
-    <div className={['dx-appinstall', block ? 'dx-appinstall--block' : '', className ?? ''].filter(Boolean).join(' ')}>
+    <div
+      className={['dx-appinstall', block ? 'dx-appinstall--block' : '', className ?? ''].filter(Boolean).join(' ')}
+      role="group"
+      aria-label={`Add ${serverName} to an agent app`}
+    >
       {apps.map((app) => buttons[app] ?? null)}
+      <span className="dx-appinstall__sr-only" aria-live="polite" aria-atomic="true">
+        {[
+          hermesStatus === 'copied' ? 'Hermes OAuth setup command copied.' : '',
+          claudeStatus === 'copied' ? 'Claude Code setup command copied.' : '',
+        ].filter(Boolean).join(' ')}
+      </span>
+      {hermesStatus === 'copied' ? (
+        <div className="dx-appinstall__notice">
+          <p>Run the command in your terminal. It adds the hosted MCP with OAuth.</p>
+          <a
+            className="dx-appinstall__open"
+            href={hermesOpenUrl(serverName)}
+            tabIndex={0}
+            onClick={() => onAction?.('hermes', 'deeplink')}
+          >
+            Open Hermes
+          </a>
+        </div>
+      ) : null}
+      {hermesStatus === 'failed' ? (
+        <div id={hermesErrorId} className="dx-appinstall__error" role="alert">
+          <label htmlFor={`${hermesErrorId}-command`}>
+            Couldn&apos;t copy. Select this Hermes command and run it in your terminal.
+          </label>
+          <input
+            id={`${hermesErrorId}-command`}
+            className="dx-appinstall__command"
+            readOnly
+            value={hermesCommand}
+            onFocus={(event) => event.currentTarget.select()}
+          />
+        </div>
+      ) : null}
+      {claudeStatus === 'copied' ? (
+        <div className="dx-appinstall__notice">
+          <p>Run the command in your terminal. If sign-in is required, finish it from Claude Code&apos;s <code>/mcp</code> menu.</p>
+        </div>
+      ) : null}
+      {claudeStatus === 'failed' ? (
+        <div id={claudeErrorId} className="dx-appinstall__error" role="alert">
+          <label htmlFor={`${claudeErrorId}-command`}>
+            Couldn&apos;t copy. Select this Claude Code command and run it in your terminal.
+          </label>
+          <input
+            id={`${claudeErrorId}-command`}
+            className="dx-appinstall__command"
+            readOnly
+            value={claudeCommand}
+            onFocus={(event) => event.currentTarget.select()}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }

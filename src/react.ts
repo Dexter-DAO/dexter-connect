@@ -52,6 +52,7 @@ export {
   cursorInstallUrl,
   vscodeInstallUrl,
   hermesInstallCommand,
+  hermesOpenUrl,
   claudeCodeInstallCommand,
 } from './AppInstallButtons';
 export type { AppInstallButtonsProps, InstallApp } from './AppInstallButtons';
