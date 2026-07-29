@@ -346,7 +346,7 @@ describe('continueWithDexter — keychain-first inline decisions', () => {
 
     const result = await continueWithDexter({
       transport: 'inline',
-      spendPolicy: { spendLimitAtomic: '5000000', sessionTtlSeconds: 2592000 },
+      spendPolicy: { spendLimitAtomic: '5000000', sessionTtlSeconds: '2592000' },
     });
 
     expect(result.kind).toBe('create');

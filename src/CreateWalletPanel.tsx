@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactElement } from 'react';
+import { useEffect, useId, useState, type ReactElement } from 'react';
 
 import { DexterButton, ensureDexterButtonStyles, cx } from './DexterButton';
 import { AllowanceChips } from './AllowanceChips';
@@ -6,17 +6,15 @@ import { ensureConsentStyles } from './consentStyles';
 import { ceremonyPhaseLabel } from './phase';
 import { authoredPolicy } from './policy';
 import { createWallet, type CreateWalletResult } from './enroll';
+import { shouldUsePopup } from './popup';
 import { ConnectError, type CeremonyPhase } from './types';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CreateWalletPanel — the turnkey consent-at-birth create surface. Every door
-// that mints a Dexter wallet collects the user-authored agent allowance BEFORE
-// the wallet is born (Branch's consent-at-birth ruling): an optional name, the
-// AllowanceChips ($5/$20/$50/Custom, NONE preselected), the fine print, and the
-// branded Create CTA — gated shut until a valid amount is authored. Zero is not
-// consent; nothing invents a default. On tap it runs the full createWallet
-// ceremony (one passkey approval) with the authored SpendPolicy threaded into the
-// /initialize body. One panel, every consumer (Rule #7); themeable via --dx-*.
+// that mints a Dexter wallet has exactly one consent author. Inline ceremonies
+// collect name + allowance here. Off-origin ceremonies continue into the hosted
+// Dexter window, which is the sole place that collects those values; the outer
+// page never displays a choice that the popup would discard or duplicate.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface CreateWalletPanelProps {
@@ -35,35 +33,48 @@ export interface CreateWalletPanelProps {
 }
 
 const FINE_PRINT =
-  'Agents can never spend past it, and you can revoke anytime.';
+  'This is the wallet-wide agent allowance. You can revoke it anytime. Starter credit, if available, is separate and never raises this limit.';
 
 /** The turnkey consent-at-birth create panel. */
 export function CreateWalletPanel(props: CreateWalletPanelProps): ReactElement {
   const { onCreated, onError, apiBase, transport, showName = true, className } = props;
   useEffect(ensureConsentStyles, []);
   useEffect(ensureDexterButtonStyles, []);
+  const nameInputId = useId();
 
   const [name, setName] = useState('');
   const [value, setValue] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [phase, setPhase] = useState<CeremonyPhase | null>(null);
   const [error, setError] = useState<ConnectError | null>(null);
+  const [resolvedTransport, setResolvedTransport] = useState<
+    'unknown' | 'inline' | 'popup'
+  >(
+    transport === 'inline' ? 'inline' : transport === 'popup' ? 'popup' : 'unknown',
+  );
 
-  const policy = authoredPolicy(value ?? '');
+  useEffect(() => {
+    setResolvedTransport(shouldUsePopup(transport) ? 'popup' : 'inline');
+  }, [transport]);
+
+  const hosted = resolvedTransport === 'popup';
+  const policy = resolvedTransport === 'inline' ? authoredPolicy(value ?? '') : null;
+  const canContinue = hosted || Boolean(policy);
 
   const handleCreate = async (): Promise<void> => {
     // Busy guard: ignore taps while a ceremony is already in flight.
     if (running) return;
-    // Gating guard: zero is not consent, no default — never run without a policy.
-    if (!policy) return;
+    // Inline creation is gated on the authored policy. Hosted creation owns
+    // consent in the Dexter window, so the outer page supplies no shadow value.
+    if (resolvedTransport === 'unknown' || (!hosted && !policy)) return;
 
     setError(null);
     setRunning(true);
     setPhase(null);
     try {
       const result = await createWallet({
-        name: name.trim() || 'Dexter Wallet',
-        spendPolicy: policy,
+        name: hosted ? undefined : name.trim() || 'Dexter Wallet',
+        spendPolicy: hosted ? undefined : policy ?? undefined,
         apiBase,
         transport,
         onPhase: setPhase,
@@ -84,45 +95,72 @@ export function CreateWalletPanel(props: CreateWalletPanelProps): ReactElement {
 
   return (
     <div className={cx('dx-cwp', className)}>
-      {showName && (
+      {!hosted && resolvedTransport === 'inline' && showName && (
         <div className="dx-cwp__field">
-          <label className="dx-cwp__label" htmlFor="dx-cwp-name">
+          <label className="dx-cwp__label" htmlFor={nameInputId}>
             Name your wallet
           </label>
           <input
-            id="dx-cwp-name"
+            id={nameInputId}
             className="dx-cwp__name"
             maxLength={40}
             placeholder="Dexter Wallet"
             value={name}
             disabled={running}
+            autoComplete="off"
             onChange={(e) => setName(e.target.value)}
           />
         </div>
       )}
 
-      <div className="dx-cwp__field">
-        <span className="dx-cwp__label">What agents may spend, per 30 days</span>
-        <AllowanceChips value={value} onChange={setValue} />
-      </div>
-
-      <p className="dx-cwp__fine">{FINE_PRINT}</p>
+      {hosted ? (
+        <p className="dx-cwp__hosted">
+          Dexter will open its secure wallet window. Choose the wallet name and
+          agent allowance there before your passkey creates anything.
+        </p>
+      ) : resolvedTransport === 'inline' ? (
+        <>
+          <div className="dx-cwp__field">
+            <span className="dx-cwp__label">What agents may spend automatically, per 30 days</span>
+            <AllowanceChips value={value} onChange={setValue} disabled={running} />
+          </div>
+          <p className="dx-cwp__fine">{FINE_PRINT}</p>
+        </>
+      ) : null}
 
       {error && (
-        <div className="dx-cwp__err" role="alert">
+        <div className="dx-cwp__err" role="alert" aria-live="assertive">
           {error.message || error.code}
         </div>
       )}
+
+      <p className="dx-cwp__status" role="status" aria-live="polite">
+        {running
+          ? phase
+            ? ceremonyPhaseLabel(phase)
+            : 'Starting your passkey…'
+          : resolvedTransport === 'unknown'
+            ? 'Preparing secure wallet setup…'
+            : hosted
+              ? 'Name, allowance, and passkey confirmation happen in the Dexter window.'
+              : policy
+                ? 'Allowance selected. Your passkey will create and secure the wallet.'
+                : 'Choose an allowance to continue.'}
+      </p>
 
       <DexterButton
         block
         className="dx-cwp__cta"
         loading={running}
         loadingLabel={phase ? ceremonyPhaseLabel(phase) : 'Creating…'}
-        disabled={!policy}
+        disabled={!canContinue || resolvedTransport === 'unknown'}
         onClick={handleCreate}
       >
-        {error ? 'Retry' : 'Create your Dexter Wallet'}
+        {error
+          ? 'Retry'
+          : hosted
+            ? 'Continue to Dexter Wallet'
+            : 'Create your Dexter Wallet'}
       </DexterButton>
     </div>
   );

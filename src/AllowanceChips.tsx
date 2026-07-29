@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactElement, type KeyboardEvent } from 'react';
+import { useEffect, useId, useState, type ReactElement } from 'react';
 
 import { cx } from './DexterButton';
 import { ensureConsentStyles } from './consentStyles';
@@ -22,6 +22,8 @@ export interface AllowanceChipsProps {
   onChange: (usd: string | null) => void;
   /** Extra className composed after the brand classes. */
   className?: string;
+  /** Disable every choice and the custom amount field. */
+  disabled?: boolean;
 }
 
 const PRESETS: ReadonlyArray<{ label: string; num: string }> = [
@@ -34,72 +36,71 @@ const isPreset = (v: string | null): v is string => v !== null && PRESET_NUMS.in
 
 /** The consent-at-birth allowance chips. */
 export function AllowanceChips(props: AllowanceChipsProps): ReactElement {
-  const { value, onChange, className } = props;
+  const { value, onChange, className, disabled = false } = props;
   useEffect(ensureConsentStyles, []);
   const [customOpen, setCustomOpen] = useState(false);
+  const groupName = useId();
 
   // Custom is active when the user opened it OR the value is a non-preset amount
   // (a consumer can hydrate straight into a custom number).
   const customActive = customOpen || (value !== null && !isPreset(value));
 
   const selectPreset = (num: string): void => {
+    if (disabled) return;
     setCustomOpen(false);
     onChange(num);
   };
   const selectCustom = (): void => {
+    if (disabled) return;
     setCustomOpen(true);
     // Selecting Custom clears any preset chip; keep an existing custom amount,
     // else emit null (empty is not consent).
     onChange(isPreset(value) ? null : value);
   };
 
-  const onChipKeyDown = (e: KeyboardEvent<HTMLDivElement>, select: () => void): void => {
-    if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
-      // Space must not scroll the page (native default for the key).
-      e.preventDefault();
-      select();
-    }
-  };
-
   return (
-    <div className={cx('dx-allow', className)} role="radiogroup" aria-label="Monthly agent allowance">
+    <fieldset className={cx('dx-allow', className)} disabled={disabled}>
+      <legend className="dx-sr-only">Monthly agent allowance</legend>
       {PRESETS.map(({ label, num }) => {
         const checked = !customActive && value === num;
         return (
-          <div
-            key={num}
-            role="radio"
-            aria-checked={checked}
-            tabIndex={0}
-            className={cx('dx-allow__chip', checked && 'dx-allow__chip--active')}
-            onClick={() => selectPreset(num)}
-            onKeyDown={(e) => onChipKeyDown(e, () => selectPreset(num))}
-          >
-            {label}
-          </div>
+          <label key={num} className="dx-allow__option">
+            <input
+              className="dx-allow__radio"
+              type="radio"
+              name={groupName}
+              value={num}
+              checked={checked}
+              onChange={() => selectPreset(num)}
+            />
+            <span className="dx-allow__chip">{label}</span>
+          </label>
         );
       })}
-      <div
-        role="radio"
-        aria-checked={customActive}
-        tabIndex={0}
-        className={cx('dx-allow__chip', customActive && 'dx-allow__chip--active')}
-        onClick={selectCustom}
-        onKeyDown={(e) => onChipKeyDown(e, selectCustom)}
-      >
-        Custom
-      </div>
+      <label className="dx-allow__option">
+        <input
+          className="dx-allow__radio"
+          type="radio"
+          name={groupName}
+          value="custom"
+          checked={customActive}
+          onChange={selectCustom}
+        />
+        <span className="dx-allow__chip">Custom</span>
+      </label>
       {customActive && (
         <input
           className="dx-allow__input"
+          id={`${groupName}-custom`}
           inputMode="decimal"
           placeholder="$ amount"
           aria-label="Custom monthly allowance in USD"
           value={value ?? ''}
+          disabled={disabled}
           autoFocus
           onChange={(e) => onChange(e.target.value)}
         />
       )}
-    </div>
+    </fieldset>
   );
 }

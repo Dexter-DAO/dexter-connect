@@ -22,7 +22,7 @@ const BUTTON_CSS = `
 @keyframes dx-pulse { 0%,100% { opacity: 1; } 50% { opacity: .6; } }
 .dx-btn{
   position:relative; display:inline-flex; align-items:center; justify-content:center; gap:10px;
-  padding:11px 22px; border:1px solid color-mix(in srgb,var(--dx-ember,#f26c18) 55%,transparent);
+  min-height:48px; padding:11px 22px; border:1px solid color-mix(in srgb,var(--dx-ember,#f26c18) 55%,transparent);
   border-radius:var(--dx-radius,0px);
   background:linear-gradient(135deg,var(--dx-ember,#f26c18),var(--dx-ember-2,#ba3a00));
   color:var(--dx-fg,#fff4ea); font:inherit; font-weight:600; font-size:.78rem; letter-spacing:.12em;
@@ -59,7 +59,7 @@ const BUTTON_CSS = `
 .dx-btn--danger:focus-visible{ box-shadow:0 0 0 3px color-mix(in srgb,var(--dx-danger,#b3261e) 38%,transparent); }
 .dx-btn--block{ width:100%; }
 .dx-btn--sm{
-  padding:7px 14px; gap:7px; font-size:.66rem; letter-spacing:.1em;
+  min-height:40px; padding:7px 14px; gap:7px; font-size:.66rem; letter-spacing:.1em;
   box-shadow:0 8px 16px color-mix(in srgb,var(--dx-ember,#f26c18) 18%,transparent);
 }
 .dx-btn--sm:hover{ box-shadow:0 12px 22px color-mix(in srgb,var(--dx-ember,#f26c18) 26%,transparent); }
@@ -77,6 +77,11 @@ const BUTTON_CSS = `
 .dx-chip__bal{ font-weight:600; opacity:.85; }
 .dx-chip__x{ margin-left:2px; border:none; background:transparent; color:inherit; cursor:pointer; font-size:16px; line-height:1; opacity:.6; }
 .dx-chip__x:hover{ opacity:1; }
+@media (prefers-reduced-motion:reduce){
+  .dx-btn{ transition:none; }
+  .dx-btn:hover,.dx-btn:active{ transform:none; }
+  .dx-btn__spin,.dx-btn__doing{ animation:none; }
+}
 `;
 
 /** Inject the branded CSS once. Safe to call repeatedly + on the server (no-op). */
