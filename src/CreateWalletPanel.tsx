@@ -22,7 +22,7 @@ export interface CreateWalletPanelProps {
   onCreated?: (result: CreateWalletResult) => void;
   /** Fired with the typed error if the ceremony fails. */
   onError?: (error: ConnectError) => void;
-  /** dexter-api base. Default https://api.dexter.cash (createWallet's default). */
+  /** Compatibility-only: omitted or exactly https://api.dexter.cash. */
   apiBase?: string;
   /** Where the WebAuthn ceremony runs. Default 'auto' (createWallet's default). */
   transport?: 'auto' | 'popup' | 'inline';

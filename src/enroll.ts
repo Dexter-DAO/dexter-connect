@@ -30,9 +30,8 @@ import { shouldUsePopup, openCeremonyPopup } from './popup';
 import { SESSION_TTL_30D } from './policy';
 import type { SpendPolicy } from './policy';
 import { readErrorCode } from './httpError';
+import { DEXTER_RP_ID, resolveDexterApiBase, resolveDexterRpId } from './trust';
 
-const DEFAULT_API_BASE = 'https://api.dexter.cash';
-const DEFAULT_RP_ID = 'dexter.cash';
 const DEFAULT_WALLET_NAME = 'Dexter Wallet';
 
 export interface CreateWalletConfig extends DexterConnectConfig {
@@ -75,13 +74,14 @@ export interface CreateWalletResult {
 export async function createWallet(
   config: CreateWalletConfig = {},
 ): Promise<CreateWalletResult> {
+  const apiBase = resolveDexterApiBase(config.apiBase);
+  resolveDexterRpId(config.rpId);
   // Hosted-popup transport: on any non-Dexter origin, run the create ceremony in
   // a popup on dexter.cash and get the wallet back (works on any website).
   if (shouldUsePopup(config.transport)) {
     const result = await openCeremonyPopup<CreateWalletResult>('create', {
       connectHost: config.connectHost,
       name: config.name,
-      apiBase: config.apiBase,
     });
     // The ceremony ran on dexter.cash (its localStorage), so a third-party-origin
     // create would otherwise leave THIS caller's store empty. Persist from the
@@ -93,8 +93,6 @@ export async function createWallet(
   if (typeof navigator === 'undefined' || !navigator.credentials) {
     throw new ConnectError('webauthn_unsupported', 'WebAuthn unavailable in this environment');
   }
-  const apiBase = (config.apiBase ?? DEFAULT_API_BASE).replace(/\/$/, '');
-  const rpId = config.rpId ?? DEFAULT_RP_ID;
   const name = (config.name && config.name.trim()) || DEFAULT_WALLET_NAME;
 
   config.onPhase?.('challenge');
@@ -106,7 +104,7 @@ export async function createWallet(
   // them client-side is safe — same as the old buildCreationOptions did.
   const optionsJSON: PublicKeyCredentialCreationOptionsJSON = {
     ...options,
-    rp: { ...options.rp, id: options.rp.id ?? rpId, name: 'Dexter' },
+    rp: { ...options.rp, id: DEXTER_RP_ID, name: 'Dexter' },
     user: { ...options.user, name, displayName: name },
   };
   let regResponse: RegistrationResponseJSON;
@@ -168,6 +166,7 @@ async function fetchEnrollChallenge(
   if (!data?.options?.challenge) {
     throw new ConnectError('enroll_challenge_malformed', 'no creation options in response');
   }
+  resolveDexterRpId(data.options.rp?.id);
   return data.options;
 }
 
@@ -226,4 +225,3 @@ async function initializeVault(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-

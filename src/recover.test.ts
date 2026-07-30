@@ -217,9 +217,16 @@ describe('recoverWallet — popup leg', () => {
   it("sends op='recover' with preferImmediate, relays the outcome, re-persists on the consumer origin", async () => {
     mockPopup.mockResolvedValue(okOutcome);
 
-    const out = await recoverWallet({ transport: 'popup', preferImmediate: true });
+    const out = await recoverWallet({
+      transport: 'popup',
+      preferImmediate: true,
+      apiBase: 'https://api.dexter.cash',
+    });
     expect(out).toEqual(okOutcome);
-    expect(mockPopup).toHaveBeenCalledWith('recover', expect.objectContaining({ preferImmediate: true }));
+    expect(mockPopup).toHaveBeenCalledWith('recover', {
+      connectHost: undefined,
+      preferImmediate: true,
+    });
     // The receiver's inline run wrote dexter.cash localStorage only — the SDK
     // must re-persist on the CALLER's origin (enroll.ts popup precedent).
     expect(mockSetActiveHandle).toHaveBeenCalledWith('handle-xyz', 'BranchWallet', 'cred-abc');
@@ -246,5 +253,20 @@ describe('recoverWallet — popup leg', () => {
       expect(out.reason).toBe('error');
       expect(out.error?.code).toBe('popup_blocked');
     }
+  });
+
+  it('rejects a hostile API base before opening the popup or touching WebAuthn', async () => {
+    const out = await recoverWallet({
+      transport: 'popup',
+      apiBase: 'https://attacker.example',
+    });
+
+    expect(out.ok).toBe(false);
+    if (!out.ok) {
+      expect(out.reason).toBe('error');
+      expect(out.error?.code).toBe('untrusted_api_base');
+    }
+    expect(mockPopup).not.toHaveBeenCalled();
+    expect(mockStartAuth).not.toHaveBeenCalled();
   });
 });

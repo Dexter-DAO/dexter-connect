@@ -41,7 +41,7 @@ npm install @dexterai/connect @dexterai/vault react
 ```
 
 `@solana/web3.js` and `@worldcoin/idkit` are optional peers: the first for
-agent-spend signing, the second only if you use the World ID button.
+passkey and agent-spend signing, the second only if you use the World ID button.
 
 ## Quick start
 
@@ -67,9 +67,27 @@ the wallet chip: address plus **"$X.XX available."**
 
 The ceremony is not limited to dexter.cash. On a foreign origin, `passkeyLogin`
 opens a hosted popup on `dexter.cash/connect`, runs the ceremony there, and
-posts the result back to your page (origin-checked and nonce-bound on both
-sides). The default `transport: 'auto'` picks the right mode; `'popup'` and
-`'inline'` force it.
+posts the result back to your page. A browser-stamped hello/ack binds the exact
+popup window, hosted origin, caller origin, request nonce, and requested
+operation; the caller-origin may be any HTTPS website and is not allowlisted.
+The default `transport: 'auto'` picks the right mode; `'popup'` and `'inline'`
+force it.
+
+The connected `passkeySigner.signOperation(rawOperation)` follows the same
+cross-origin rule. On an unrelated website it opens the pinned Dexter consent
+window and sends the raw operation plus the selected vault identity only after
+the exact hello/ack handshake. Those bytes are structured-cloned in a
+`sign-request`; they are never put in the URL. The Dexter window displays the
+requesting origin and operation-specific consent before returning the
+on-chain-ready assertion bytes.
+
+WebAuthn challenge and verification calls are pinned to
+`https://api.dexter.cash`. The legacy `apiBase` option remains source-compatible
+only for that exact value (an optional trailing slash is normalized); any other
+server fails before a popup, fetch, or authenticator call. `apiBase` is never
+placed in the hosted popup URL. The legacy `connectHost` option is likewise
+compatibility-only and may name only `https://dexter.cash/connect`; this pins
+the credential-handling window without restricting the embedding website.
 
 ```ts
 import { passkeyLogin } from '@dexterai/connect';
@@ -209,8 +227,8 @@ React: `<SignInWithDexter mode="recover" preferImmediate onRecovered={…} />`
 | Peer | Required | Why |
 |---|---|---|
 | `react` >=18 | yes | the `/react` and `/worldid` surfaces |
-| `@dexterai/vault` >=0.30 | yes | signer + agent-spend message builders (0.30 matches the deployed program's account layout) |
-| `@solana/web3.js` | optional | agent-spend signing paths |
+| `@dexterai/vault` ^0.42 | yes | hardened signer envelope validation + agent-spend message builders |
+| `@solana/web3.js` | optional | passkey and agent-spend signing paths |
 | `@worldcoin/idkit` | optional | only for `/worldid` |
 
 The `/server` entry has none of these peers; it depends only on `jose`.

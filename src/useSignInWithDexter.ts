@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { DexterApiBrowserPasskeySigner } from '@dexterai/vault/signers/browser';
+import type { PasskeySignerWithPublicKey } from '@dexterai/vault/signers';
 import { passkeyLogin, continueWithDexter, type ContinueResult } from './relay';
 import { recoverWallet } from './recover';
 import { fetchUsdcBalance } from './balance';
@@ -19,7 +19,7 @@ const DEFAULT_RPC = 'https://api.dexter.cash/proxy/helius/rpc';
 export type ConnectStatus = 'idle' | 'pending' | 'done' | 'error';
 
 export interface UseSignInWithDexterConfig {
-  /** dexter-api base. Default https://api.dexter.cash. */
+  /** Compatibility-only: omitted or exactly https://api.dexter.cash. */
   apiBase?: string;
   /** RPC for the connected-chip balance read. Default: Dexter's Helius proxy. */
   rpcUrl?: string;
@@ -65,7 +65,7 @@ export interface UseSignInWithDexter {
   credentialId: string | null;
   /** Guest passkey signer for authorizing spends / opening x402 tabs. null until
    *  a vault is connected. Drive it via `passkeySigner.signOperation(op)`. */
-  passkeySigner: DexterApiBrowserPasskeySigner | null;
+  passkeySigner: PasskeySignerWithPublicKey | null;
   /** USD available. number once read; null = unknown → chip shows wallet only. */
   usdcBalance: number | null;
   refreshBalance: () => Promise<void>;
@@ -199,12 +199,17 @@ export function useSignInWithDexter(
     setStatus('idle');
   }, []);
 
-  // The guest passkey signer for the connected vault. The SDK signer owns the
-  // WebAuthn ceremony + sha256(op) hashing; the connector supplies the anon
-  // ServerPolicy. Rebuilt only when the vault (or apiBase) changes.
+  // The guest passkey signer for the connected vault. On dexter.cash the SDK
+  // signer runs inline; every unrelated origin uses the pinned hosted consent
+  // popup so the Dexter RP credential never runs in a merchant page.
   const passkeySigner = useMemo(
-    () => (vault ? createPasskeySigner(vault, apiBase) : null),
-    [vault, apiBase],
+    () =>
+      vault
+        ? createPasskeySigner(vault, apiBase, {
+            ...(connectHost ? { connectHost } : {}),
+          })
+        : null,
+    [vault, apiBase, connectHost],
   );
 
   // Best-effort balance read once a vault with a resolved ATA is connected.

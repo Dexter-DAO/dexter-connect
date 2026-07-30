@@ -21,8 +21,8 @@ import {
   immediateGetSupported,
   primeImmediateSupport,
 } from './immediate';
+import { resolveDexterApiBase, resolveDexterRpId } from './trust';
 
-const DEFAULT_API_BASE = 'https://api.dexter.cash';
 const ANON_SIGN_BASE = '/api/passkey-anon/sign';
 
 // Settle the immediate-mode capability probe at module load so continue's
@@ -47,12 +47,12 @@ export async function passkeyLogin(
   config: DexterConnectConfig = {},
   onPhase?: (phase: CeremonyPhase) => void,
 ): Promise<SignInResult> {
+  const apiBase = resolveDexterApiBase(config.apiBase);
   // Hosted-popup transport: on any non-Dexter origin, run the ceremony in a
   // popup on dexter.cash and get the same result back (works on any website).
   if (shouldUsePopup(config.transport)) {
     const result = await openCeremonyPopup<SignInResult>('signin', {
       connectHost: config.connectHost,
-      apiBase: config.apiBase,
     });
     // Persist the active handle so the SDK wallet store reflects the sign-in
     // (guarded: a session without a vault leaves nothing to record).
@@ -64,7 +64,6 @@ export async function passkeyLogin(
   if (!browserSupportsWebAuthn()) {
     throw new ConnectError('webauthn_unsupported', 'WebAuthn unavailable in this environment');
   }
-  const apiBase = (config.apiBase ?? DEFAULT_API_BASE).replace(/\/$/, '');
   onPhase?.('challenge');
   const options = await fetchLoginChallenge(apiBase);
   onPhase?.('passkey');
@@ -123,13 +122,14 @@ export async function continueWithDexter(
   config: CreateWalletConfig = {},
   onPhase?: (phase: CeremonyPhase) => void,
 ): Promise<ContinueResult> {
+  // Validate before either opening the trusted popup or touching WebAuthn.
+  resolveDexterApiBase(config.apiBase);
   // Off-origin: the popup on dexter.cash decides (it alone can see the
   // dexter.cash keychain/handle); only terminal outcomes ride back.
   if (shouldUsePopup(config.transport)) {
     const result = await openCeremonyPopup<ContinueResult>('continue', {
       connectHost: config.connectHost,
       name: config.name,
-      apiBase: config.apiBase,
     });
     // Persist the active handle for whichever branch the popup resolved. A create
     // carries the identity at the top level; a signin only has one when the
@@ -174,7 +174,7 @@ async function immediatePasskeyLogin(
   | { outcome: 'no_credential' }
   | { outcome: 'cancelled' }
 > {
-  const apiBase = (config.apiBase ?? DEFAULT_API_BASE).replace(/\/$/, '');
+  const apiBase = resolveDexterApiBase(config.apiBase);
   onPhase?.('challenge');
   const options = await fetchLoginChallenge(apiBase);
   onPhase?.('passkey');
@@ -219,7 +219,7 @@ async function fetchLoginChallenge(
   if (!data?.options?.challenge) {
     throw new ConnectError('login_challenge_malformed', 'no challenge in response');
   }
-  return data.options;
+  return { ...data.options, rpId: resolveDexterRpId(data.options.rpId) };
 }
 
 async function submitLogin(
@@ -248,4 +248,3 @@ async function submitLogin(
   };
   return data.vault ? { session, vault: data.vault } : { session };
 }
-

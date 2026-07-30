@@ -33,7 +33,7 @@ interface HappyWindow {
 }
 
 const fullVault = {
-  vaultPda: 'vpda',
+  vaultPda: '4vJ9JU1bJJE96FWSJKvHsmmFADCg4gpZQff4P3bkLKi',
   swigAddress: 'swig-addr',
   receiveAddress: null,
   usdcAta: null,

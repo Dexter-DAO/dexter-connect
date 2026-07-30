@@ -49,6 +49,35 @@ export interface SignInResult {
  */
 export type CeremonyPhase = 'challenge' | 'passkey' | 'verifying' | 'finalizing';
 
+/** Exact action the hosted Dexter consent window is being asked to perform. */
+export type CeremonyOperation = 'signin' | 'create' | 'continue' | 'recover' | 'sign';
+
+/** Minimal vault identity transferred to Dexter's hosted signing window. */
+export interface HostedSignVaultIdentity {
+  vaultPda: string;
+  publicKey: string;
+  userHandle: string;
+  credentialId: string;
+  walletLabel?: string | null;
+}
+
+/**
+ * Sensitive signing input. This is structured-cloned to the pinned Dexter
+ * popup only after the browser-stamped hello/ack; it is never serialized into
+ * the popup URL.
+ */
+export interface HostedSignRequestPayload {
+  operationMessage: Uint8Array;
+  vault: HostedSignVaultIdentity;
+}
+
+/** On-chain-ready assertion bytes returned by the hosted Dexter popup. */
+export interface HostedSignResult {
+  signature: Uint8Array;
+  clientDataJSON: Uint8Array;
+  authenticatorData: Uint8Array;
+}
+
 /**
  * Vault identity on the wallet-only recover leg, as reported by
  * /api/passkey-vault-anon/status. Narrower than ConnectVault on purpose —
@@ -87,7 +116,11 @@ export interface RecoverWalletConfig extends DexterConnectConfig {
 }
 
 export interface DexterConnectConfig {
-  /** dexter-api base. Default https://api.dexter.cash. */
+  /**
+   * Compatibility-only Dexter API base. Omit it or pass exactly
+   * https://api.dexter.cash. Noncanonical values fail before WebAuthn and this
+   * value is never propagated into the hosted popup.
+   */
   apiBase?: string;
   /**
    * Where the WebAuthn ceremony runs:

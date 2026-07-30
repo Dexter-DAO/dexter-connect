@@ -90,7 +90,11 @@ describe('CreateWalletPanel — ceremony flow', () => {
     createWallet.mockResolvedValue(OK);
     const onCreated = vi.fn();
     const { container } = await render(
-      <CreateWalletPanel onCreated={onCreated} apiBase="https://api.test" transport="inline" />,
+      <CreateWalletPanel
+        onCreated={onCreated}
+        apiBase="https://api.dexter.cash"
+        transport="inline"
+      />,
     );
     await type(container.querySelector('input[maxlength="40"]'), '  My Wallet  ');
     await click(radio(container, '$20'));
@@ -101,7 +105,7 @@ describe('CreateWalletPanel — ceremony flow', () => {
     const arg = createWallet.mock.calls[0][0];
     expect(arg.name).toBe('My Wallet');
     expect(arg.spendPolicy).toEqual({ spendLimitAtomic: '20000000', sessionTtlSeconds: '2592000' });
-    expect(arg.apiBase).toBe('https://api.test');
+    expect(arg.apiBase).toBe('https://api.dexter.cash');
     expect(arg.transport).toBe('inline');
     expect(onCreated).toHaveBeenCalledWith(OK);
   });

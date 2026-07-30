@@ -30,8 +30,8 @@ import {
   immediateGetSupported,
   primeImmediateSupport,
 } from './immediate';
+import { resolveDexterApiBase, resolveDexterRpId } from './trust';
 
-const DEFAULT_API_BASE = 'https://api.dexter.cash';
 const ANON_SIGN_BASE = '/api/passkey-anon/sign';
 
 // Resolve the immediate-mode capability probe at module load so the tap-time
@@ -40,6 +40,12 @@ const ANON_SIGN_BASE = '/api/passkey-anon/sign';
 primeImmediateSupport();
 
 export async function recoverWallet(config: RecoverWalletConfig = {}): Promise<RecoverOutcome> {
+  let apiBase: string;
+  try {
+    apiBase = resolveDexterApiBase(config.apiBase);
+  } catch (err) {
+    return netError('untrusted_api_base', err);
+  }
   // Hosted-popup transport: on any non-Dexter origin the ceremony runs in a
   // popup on dexter.cash and the OUTCOME comes back over postMessage. A
   // completed ceremony travels ok:true even when the user declined — popup
@@ -49,7 +55,6 @@ export async function recoverWallet(config: RecoverWalletConfig = {}): Promise<R
     try {
       outcome = await openCeremonyPopup<RecoverOutcome>('recover', {
         connectHost: config.connectHost,
-        apiBase: config.apiBase,
         preferImmediate: config.preferImmediate,
       });
     } catch (err) {
@@ -77,7 +82,6 @@ export async function recoverWallet(config: RecoverWalletConfig = {}): Promise<R
     };
   }
 
-  const apiBase = (config.apiBase ?? DEFAULT_API_BASE).replace(/\/$/, '');
   const onPhase = config.onPhase;
 
   onPhase?.('challenge');
@@ -89,8 +93,21 @@ export async function recoverWallet(config: RecoverWalletConfig = {}): Promise<R
       body: '{}',
     });
     if (!res.ok) return { ok: false, reason: 'error', error: new ConnectError(await readErrorCode(res)) };
-    options = ((await res.json()) as { options: PublicKeyCredentialRequestOptionsJSON }).options;
+    const serverOptions = ((await res.json()) as {
+      options: PublicKeyCredentialRequestOptionsJSON;
+    }).options;
+    if (!serverOptions?.challenge) {
+      return {
+        ok: false,
+        reason: 'error',
+        error: new ConnectError('recover_challenge_malformed', 'no challenge in response'),
+      };
+    }
+    options = { ...serverOptions, rpId: resolveDexterRpId(serverOptions.rpId) };
   } catch (err) {
+    if (err instanceof ConnectError && err.code === 'untrusted_rp_id') {
+      return { ok: false, reason: 'error', error: err };
+    }
     return netError('recover_challenge_failed', err);
   }
 

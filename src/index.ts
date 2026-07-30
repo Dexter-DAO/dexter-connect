@@ -13,6 +13,7 @@ export type {
 export { createAnonServerPolicy } from './anon-policy';
 export type { AnonServerPolicy, AnonChallengeResult } from './anon-policy';
 export { createPasskeySigner } from './signer';
+export type { CreatePasskeySignerOptions } from './signer';
 // The identity resolver: the single "who is active" combiner (account session +
 // passkey-vault handle). Pure, framework-free, passkey-vault-FIRST. The SDK stays
 // auth-agnostic — the consumer passes its account token in. Identity = WHO; facts
@@ -31,7 +32,13 @@ export type { CreateWalletConfig, CreateWalletResult } from './enroll';
 // on mount. UI copy stays "Sign in with Dexter"; "recover" never reaches users.
 export { recoverWallet } from './recover';
 export type { RecoverOutcome, RecoverVault, RecoverWalletConfig } from './types';
-export type { CeremonyPhase } from './types';
+export type {
+  CeremonyPhase,
+  CeremonyOperation,
+  HostedSignRequestPayload,
+  HostedSignResult,
+  HostedSignVaultIdentity,
+} from './types';
 // Consent-at-birth policy helpers (Branch rulings 2026-07-02/03). The SINGLE
 // source for the fixed-30d TTL and the USD→atomic parse — consumers stop
 // re-declaring SESSION_TTL_30D / usdToAtomic (Rule #7). The user authors the
