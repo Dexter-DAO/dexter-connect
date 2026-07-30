@@ -49,6 +49,8 @@ export type { CreateWalletPanelProps } from './CreateWalletPanel';
 
 export {
   AppInstallButtons,
+  claudeWebConnectorUrl,
+  chatgptPluginsUrl,
   cursorInstallUrl,
   vscodeInstallUrl,
   hermesInstallCommand,
