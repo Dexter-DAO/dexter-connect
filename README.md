@@ -227,7 +227,7 @@ React: `<SignInWithDexter mode="recover" preferImmediate onRecovered={…} />`
 | Peer | Required | Why |
 |---|---|---|
 | `react` >=18 | yes | the `/react` and `/worldid` surfaces |
-| `@dexterai/vault` ^0.42 | yes | hardened signer envelope validation + agent-spend message builders |
+| `@dexterai/vault` ^0.43 | yes | hardened signer envelope validation + agent-spend message builders |
 | `@solana/web3.js` | optional | passkey and agent-spend signing paths |
 | `@worldcoin/idkit` | optional | only for `/worldid` |
 
