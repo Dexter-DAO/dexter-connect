@@ -149,9 +149,16 @@ describe('createWallet — popup persistence', () => {
   it('persists the active handle from the CreateWalletResult (label = name)', async () => {
     mockPopup.mockResolvedValueOnce(popupResult);
 
-    const out = await createWallet({ transport: 'popup', name: 'Popup Wallet' });
+    const out = await createWallet({
+      transport: 'popup',
+      name: 'Popup Wallet',
+      apiBase: 'https://api.dexter.cash',
+    });
 
-    expect(mockPopup).toHaveBeenCalledWith('create', expect.anything());
+    expect(mockPopup).toHaveBeenCalledWith('create', {
+      connectHost: undefined,
+      name: 'Popup Wallet',
+    });
     expect(mockSetActiveHandle).toHaveBeenCalledWith('popup-handle', 'Popup Wallet', 'popup-cred');
     expect(out).toEqual(popupResult);
   });
@@ -163,6 +170,18 @@ describe('createWallet — popup persistence', () => {
       code: 'popup_closed',
     });
     expect(mockSetActiveHandle).not.toHaveBeenCalled();
+  });
+
+  it('rejects a hostile API base before popup, fetch, or WebAuthn', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      createWallet({ transport: 'popup', apiBase: 'https://attacker.example' }),
+    ).rejects.toMatchObject({ code: 'untrusted_api_base' });
+    expect(mockPopup).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mockStartReg).not.toHaveBeenCalled();
   });
 });
 

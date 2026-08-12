@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Connect 0.26.2 release review</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }
+    body { margin: 0; background: #090b10; color: #edf1f7; }
+    main { max-width: 920px; margin: 0 auto; padding: 48px 24px 72px; }
+    h1, h2 { letter-spacing: -0.03em; }
+    h1 { font-size: 42px; margin: 0 0 8px; }
+    h2 { margin-top: 36px; }
+    p, li, td { line-height: 1.55; color: #c8d0dc; }
+    code { color: #afffc9; }
+    .sub { color: #8f9bab; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+    .card { border: 1px solid #27303c; border-radius: 14px; padding: 18px; background: #11151d; }
+    .grade { font-size: 30px; font-weight: 750; color: #afffc9; }
+    .label { color: #8f9bab; font-size: 13px; text-transform: uppercase; letter-spacing: .08em; }
+    table { width: 100%; border-collapse: collapse; background: #11151d; }
+    th, td { text-align: left; vertical-align: top; padding: 13px 14px; border-bottom: 1px solid #27303c; }
+    th { color: #8f9bab; font-size: 12px; text-transform: uppercase; letter-spacing: .08em; }
+    .clear { color: #afffc9; font-weight: 700; }
+  </style>
+</head>
+<body>
+<main>
+  <p class="sub">PREPARE-only · immutable package candidate · 2026-07-31</p>
+  <h1>Connect 0.26.2</h1>
+  <p>
+    The Connect package is coherently recut against the published Vault 0.43.0
+    contract. No Connect runtime source changed; the version, exact development
+    pin, compatible peer range, lock, documentation, and built artifact agree.
+  </p>
+
+  <div class="grid">
+    <div class="card"><div class="label">Security</div><div class="grade">A</div></div>
+    <div class="card"><div class="label">Quality</div><div class="grade">A</div></div>
+    <div class="card"><div class="label">Tests</div><div class="grade">199</div></div>
+    <div class="card"><div class="label">Publishable</div><div class="grade">Yes</div></div>
+  </div>
+
+  <h2>Release contract</h2>
+  <table>
+    <thead><tr><th>Field</th><th>Exact value</th></tr></thead>
+    <tbody>
+      <tr><td>Package</td><td><code>@dexterai/connect@0.26.2</code></td></tr>
+      <tr><td>Vault development pin</td><td><code>0.43.0</code></td></tr>
+      <tr><td>Vault consumer peer</td><td><code>^0.43.0</code></td></tr>
+      <tr><td>Registry Vault integrity</td><td><code>sha512-WJVc4hjVMY+xGUhs1Yct2Hin8LiPccX/Og6jP6+NDuWqopj8bEAU/7iVgAljqFDXkM3BTNFXuXalaSmCZvBeYA==</code></td></tr>
+    </tbody>
+  </table>
+
+  <h2>Evidence</h2>
+  <ul>
+    <li>Full suite: <code>25 files / 199 tests passed</code>.</li>
+    <li>TypeScript no-emit check passed.</li>
+    <li>ESM and declaration builds passed for all four exported entrypoints.</li>
+    <li>Production dependency audit reports zero known vulnerabilities.</li>
+    <li>The package allowlist contains README, package metadata, and 11 built files only.</li>
+  </ul>
+
+  <p class="sub">
+    No package was published, application deployed, production process changed,
+    transaction signed, or money moved by this candidate preparation.
+  </p>
+</main>
+</body>
+</html>

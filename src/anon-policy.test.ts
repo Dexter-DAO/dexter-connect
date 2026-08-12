@@ -1,4 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import { PublicKey } from '@solana/web3.js';
+import { buildPasskeyAuthorizationChallenge } from '@dexterai/vault';
 import { createAnonServerPolicy } from './anon-policy';
 import { ConnectError } from './types';
 import {
@@ -12,8 +14,20 @@ const API = 'https://api.dexter.cash';
 
 // userHandle is 16 bytes (the server enforces it); operationHash is 32 (sha256).
 const userHandle = new Uint8Array(16).map((_, i) => i + 1);
+const operationMessage = new Uint8Array([1, 2, 3, 4]);
 const operationHash = new Uint8Array(32).map((_, i) => i + 100);
 const credentialIdBytes = new Uint8Array([9, 8, 7, 6, 5]);
+const challenge = buildPasskeyAuthorizationChallenge({
+  vault: new PublicKey(new Uint8Array(32).fill(1)),
+  nonce: 7n,
+  operationHash,
+  ceremonyNonce: new Uint8Array(32).fill(9),
+});
+const issueArgs = {
+  userHandle,
+  operationMessage,
+  operationHash,
+};
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -21,13 +35,10 @@ afterEach(() => {
 });
 
 describe('createAnonServerPolicy.issueChallenge', () => {
-  it('POSTs base64url userHandle + operationHash to /challenge and decodes the response', async () => {
-    // Server reflects the opHash as the challenge (the contract) and resolves
-    // a credential into options.allowCredentials[0]. Encodings: simplewebauthn
-    // emits base64url for challenge + allowCredentials[].id.
+  it('POSTs the operation context and decodes the canonical challenge envelope', async () => {
     const serverResp = {
       options: {
-        challenge: bytesToBase64url(operationHash),
+        challenge: bytesToBase64url(challenge),
         rpId: 'dexter.cash',
         allowCredentials: [
           { id: bytesToBase64url(credentialIdBytes), type: 'public-key', transports: ['internal'] },
@@ -37,8 +48,8 @@ describe('createAnonServerPolicy.issueChallenge', () => {
     const fetchMock = vi.fn(async () => ({ ok: true, json: async () => serverResp }));
     vi.stubGlobal('fetch', fetchMock);
 
-    const policy = createAnonServerPolicy(API);
-    const result = await policy.issueChallenge({ userHandle, operationHash });
+    const policy = createAnonServerPolicy(`${API}/`);
+    const result = await policy.issueChallenge(issueArgs);
 
     // URL
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -46,18 +57,52 @@ describe('createAnonServerPolicy.issueChallenge', () => {
     expect(url).toBe(`${API}/api/passkey-anon/sign/challenge`);
     expect(init.method).toBe('POST');
 
-    // Body: userHandle + operationHash as base64url STRINGS (what the server parses).
+    // The server receives enough raw context to classify operation-specific consent.
     const body = JSON.parse(init.body as string);
     expect(body).toEqual({
       userHandle: bytesToBase64url(userHandle),
       operationHash: bytesToBase64url(operationHash),
+      operationMessage: bytesToBase64url(operationMessage),
+      operation: 'vault_operation',
     });
 
     // Decoded result is Uint8Arrays + passthrough rpId/transports.
-    expect(result.challenge).toEqual(operationHash);
+    expect(result.challenge).toEqual(challenge);
     expect(result.credentialId).toEqual(credentialIdBytes);
     expect(result.rpId).toBe('dexter.cash');
     expect(result.transports).toEqual(['internal']);
+  });
+
+  it('rejects a caller-controlled signing server before any request', () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    expect(() => createAnonServerPolicy('https://attacker.example')).toThrowError(
+      expect.objectContaining({ code: 'untrusted_api_base' }),
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('passes the envelope through for the SDK to validate before WebAuthn', async () => {
+    const substitutedEnvelope = challenge.slice();
+    substitutedEnvelope[96] ^= 0xff;
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        options: {
+          challenge: bytesToBase64url(substitutedEnvelope),
+          rpId: 'dexter.cash',
+          allowCredentials: [{ id: bytesToBase64url(credentialIdBytes) }],
+        },
+      }),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const policy = createAnonServerPolicy();
+    await expect(policy.issueChallenge(issueArgs)).resolves.toMatchObject({
+      challenge: substitutedEnvelope,
+    });
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 
   it('throws ConnectError with the server error code on a non-ok /challenge', async () => {
@@ -71,12 +116,10 @@ describe('createAnonServerPolicy.issueChallenge', () => {
       })),
     );
     const policy = createAnonServerPolicy(API);
-    await expect(policy.issueChallenge({ userHandle, operationHash })).rejects.toMatchObject({
+    await expect(policy.issueChallenge(issueArgs)).rejects.toMatchObject({
       code: 'credential_not_found',
     });
-    await expect(policy.issueChallenge({ userHandle, operationHash })).rejects.toBeInstanceOf(
-      ConnectError,
-    );
+    await expect(policy.issueChallenge(issueArgs)).rejects.toBeInstanceOf(ConnectError);
   });
 
   it('throws a typed error when the response has no allow-listed credential', async () => {
@@ -84,11 +127,13 @@ describe('createAnonServerPolicy.issueChallenge', () => {
       'fetch',
       vi.fn(async () => ({
         ok: true,
-        json: async () => ({ options: { challenge: bytesToBase64url(operationHash), allowCredentials: [] } }),
+        json: async () => ({
+          options: { challenge: bytesToBase64url(challenge), allowCredentials: [] },
+        }),
       })),
     );
     const policy = createAnonServerPolicy(API);
-    await expect(policy.issueChallenge({ userHandle, operationHash })).rejects.toMatchObject({
+    await expect(policy.issueChallenge(issueArgs)).rejects.toMatchObject({
       code: 'no_credential',
     });
   });
@@ -157,6 +202,18 @@ describe('createAnonServerPolicy.verify', () => {
 
   it('throws when the server returns verified=false', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ verified: false }) })));
+    const policy = createAnonServerPolicy(API);
+    await expect(
+      policy.verify({ userHandle, credentialId: credentialIdBytes, signature, clientDataJSON, authenticatorData }),
+    ).rejects.toMatchObject({ code: 'verification_failed' });
+  });
+
+  it.each([
+    ['missing', {}],
+    ['null', { verified: null }],
+    ['string', { verified: 'true' }],
+  ])('rejects a 2xx response with %s verified truth', async (_label, body) => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => body })));
     const policy = createAnonServerPolicy(API);
     await expect(
       policy.verify({ userHandle, credentialId: credentialIdBytes, signature, clientDataJSON, authenticatorData }),

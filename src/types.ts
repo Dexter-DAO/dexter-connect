@@ -50,6 +50,46 @@ export interface SignInResult {
 export type CeremonyPhase = 'challenge' | 'passkey' | 'verifying' | 'finalizing';
 
 /**
+ * Controls whether a successful sign-in/recovery immediately changes the
+ * browser's active-wallet store.
+ *
+ * `commit` preserves the historical SDK behavior. `provisional` returns the
+ * verified session/vault without writing either the active handle or wallet
+ * roster, so a caller can finish an account-level approval first and then
+ * explicitly commit the approved wallet with `setActiveHandle`.
+ */
+export type WalletStoreMode = 'commit' | 'provisional';
+
+/** Exact action the hosted Dexter consent window is being asked to perform. */
+export type CeremonyOperation = 'signin' | 'create' | 'continue' | 'recover' | 'sign';
+
+/** Minimal vault identity transferred to Dexter's hosted signing window. */
+export interface HostedSignVaultIdentity {
+  vaultPda: string;
+  publicKey: string;
+  userHandle: string;
+  credentialId: string;
+  walletLabel?: string | null;
+}
+
+/**
+ * Sensitive signing input. This is structured-cloned to the pinned Dexter
+ * popup only after the browser-stamped hello/ack; it is never serialized into
+ * the popup URL.
+ */
+export interface HostedSignRequestPayload {
+  operationMessage: Uint8Array;
+  vault: HostedSignVaultIdentity;
+}
+
+/** On-chain-ready assertion bytes returned by the hosted Dexter popup. */
+export interface HostedSignResult {
+  signature: Uint8Array;
+  clientDataJSON: Uint8Array;
+  authenticatorData: Uint8Array;
+}
+
+/**
  * Vault identity on the wallet-only recover leg, as reported by
  * /api/passkey-vault-anon/status. Narrower than ConnectVault on purpose —
  * the status endpoint carries no publicKey/usdcAta, so a recover cannot
@@ -83,11 +123,27 @@ export interface RecoverWalletConfig extends DexterConnectConfig {
    *  discoverable passkey (no empty account-picker sheet). Falls back to the
    *  normal modal wherever unsupported. */
   preferImmediate?: boolean;
+  /** See `PasskeyLoginConfig.walletStore`. */
+  walletStore?: WalletStoreMode;
   onPhase?: (phase: CeremonyPhase) => void;
 }
 
+/** Configuration for `passkeyLogin`. */
+export interface PasskeyLoginConfig extends DexterConnectConfig {
+  /**
+   * Wallet-store behavior after a successful passkey ceremony. Defaults to
+   * `commit` for backward compatibility. Use `provisional` when the returned
+   * wallet must pass a separate approval before becoming active.
+   */
+  walletStore?: WalletStoreMode;
+}
+
 export interface DexterConnectConfig {
-  /** dexter-api base. Default https://api.dexter.cash. */
+  /**
+   * Compatibility-only Dexter API base. Omit it or pass exactly
+   * https://api.dexter.cash. Noncanonical values fail before WebAuthn and this
+   * value is never propagated into the hosted popup.
+   */
   apiBase?: string;
   /**
    * Where the WebAuthn ceremony runs:
@@ -101,6 +157,16 @@ export interface DexterConnectConfig {
   transport?: 'auto' | 'popup' | 'inline';
   /** Hosted ceremony page (popup transport). Default https://dexter.cash/connect. */
   connectHost?: string;
+}
+
+/** Runtime guard for JavaScript callers and hosted-popup query parsing. */
+export function resolveWalletStoreMode(mode: unknown): WalletStoreMode {
+  if (mode === undefined || mode === 'commit') return 'commit';
+  if (mode === 'provisional') return 'provisional';
+  throw new ConnectError(
+    'invalid_wallet_store_mode',
+    'walletStore must be exactly commit or provisional',
+  );
 }
 
 /** Typed error whose `code` is the server's snake_case error string. */

@@ -1,11 +1,12 @@
 import type {
   DexterConnectConfig,
+  PasskeyLoginConfig,
   PasskeyLoginTokens,
   ConnectVault,
   SignInResult,
   CeremonyPhase,
 } from './types';
-import { ConnectError } from './types';
+import { ConnectError, resolveWalletStoreMode } from './types';
 import { startAuthentication, browserSupportsWebAuthn } from '@simplewebauthn/browser';
 import type {
   AuthenticationResponseJSON,
@@ -21,8 +22,8 @@ import {
   immediateGetSupported,
   primeImmediateSupport,
 } from './immediate';
+import { resolveDexterApiBase, resolveDexterRpId } from './trust';
 
-const DEFAULT_API_BASE = 'https://api.dexter.cash';
 const ANON_SIGN_BASE = '/api/passkey-anon/sign';
 
 // Settle the immediate-mode capability probe at module load so continue's
@@ -44,19 +45,22 @@ primeImmediateSupport();
  * Supabase session, so the Supabase-gated router would 401.
  */
 export async function passkeyLogin(
-  config: DexterConnectConfig = {},
+  config: PasskeyLoginConfig = {},
   onPhase?: (phase: CeremonyPhase) => void,
 ): Promise<SignInResult> {
+  const apiBase = resolveDexterApiBase(config.apiBase);
+  const walletStore = resolveWalletStoreMode(config.walletStore);
   // Hosted-popup transport: on any non-Dexter origin, run the ceremony in a
   // popup on dexter.cash and get the same result back (works on any website).
   if (shouldUsePopup(config.transport)) {
     const result = await openCeremonyPopup<SignInResult>('signin', {
       connectHost: config.connectHost,
-      apiBase: config.apiBase,
+      ...(walletStore === 'provisional' ? { walletStore } : {}),
     });
-    // Persist the active handle so the SDK wallet store reflects the sign-in
-    // (guarded: a session without a vault leaves nothing to record).
-    if (result.vault) {
+    // Commit mode preserves the historical active-wallet behavior. A
+    // provisional caller receives the same verified result with zero store
+    // writes on either origin, then explicitly commits after approval.
+    if (walletStore === 'commit' && result.vault) {
       setActiveHandle(result.vault.userHandle, result.vault.walletLabel ?? undefined, result.vault.credentialId);
     }
     return result;
@@ -64,7 +68,6 @@ export async function passkeyLogin(
   if (!browserSupportsWebAuthn()) {
     throw new ConnectError('webauthn_unsupported', 'WebAuthn unavailable in this environment');
   }
-  const apiBase = (config.apiBase ?? DEFAULT_API_BASE).replace(/\/$/, '');
   onPhase?.('challenge');
   const options = await fetchLoginChallenge(apiBase);
   onPhase?.('passkey');
@@ -78,9 +81,9 @@ export async function passkeyLogin(
   }
   onPhase?.('verifying');
   const result = await submitLogin(apiBase, response);
-  // Persist the active handle on a successful inline sign-in (guarded: no vault,
+  // Persist a successful inline sign-in only in commit mode (guarded: no vault,
   // nothing to record — same discipline as the popup path above).
-  if (result.vault) {
+  if (walletStore === 'commit' && result.vault) {
     setActiveHandle(result.vault.userHandle, result.vault.walletLabel ?? undefined, result.vault.credentialId);
   }
   return result;
@@ -123,13 +126,14 @@ export async function continueWithDexter(
   config: CreateWalletConfig = {},
   onPhase?: (phase: CeremonyPhase) => void,
 ): Promise<ContinueResult> {
+  // Validate before either opening the trusted popup or touching WebAuthn.
+  resolveDexterApiBase(config.apiBase);
   // Off-origin: the popup on dexter.cash decides (it alone can see the
   // dexter.cash keychain/handle); only terminal outcomes ride back.
   if (shouldUsePopup(config.transport)) {
     const result = await openCeremonyPopup<ContinueResult>('continue', {
       connectHost: config.connectHost,
       name: config.name,
-      apiBase: config.apiBase,
     });
     // Persist the active handle for whichever branch the popup resolved. A create
     // carries the identity at the top level; a signin only has one when the
@@ -174,7 +178,7 @@ async function immediatePasskeyLogin(
   | { outcome: 'no_credential' }
   | { outcome: 'cancelled' }
 > {
-  const apiBase = (config.apiBase ?? DEFAULT_API_BASE).replace(/\/$/, '');
+  const apiBase = resolveDexterApiBase(config.apiBase);
   onPhase?.('challenge');
   const options = await fetchLoginChallenge(apiBase);
   onPhase?.('passkey');
@@ -219,7 +223,7 @@ async function fetchLoginChallenge(
   if (!data?.options?.challenge) {
     throw new ConnectError('login_challenge_malformed', 'no challenge in response');
   }
-  return data.options;
+  return { ...data.options, rpId: resolveDexterRpId(data.options.rpId) };
 }
 
 async function submitLogin(
@@ -248,4 +252,3 @@ async function submitLogin(
   };
   return data.vault ? { session, vault: data.vault } : { session };
 }
-

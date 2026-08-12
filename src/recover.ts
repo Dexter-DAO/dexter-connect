@@ -19,8 +19,8 @@ import type {
   PublicKeyCredentialRequestOptionsJSON,
 } from '@simplewebauthn/browser';
 
-import type { RecoverOutcome, RecoverVault, RecoverWalletConfig } from './types';
-import { ConnectError } from './types';
+import type { RecoverOutcome, RecoverVault, RecoverWalletConfig, WalletStoreMode } from './types';
+import { ConnectError, resolveWalletStoreMode } from './types';
 import { shouldUsePopup, openCeremonyPopup } from './popup';
 import { setActiveHandle } from './walletStore';
 import { readErrorCode } from './httpError';
@@ -30,8 +30,8 @@ import {
   immediateGetSupported,
   primeImmediateSupport,
 } from './immediate';
+import { resolveDexterApiBase, resolveDexterRpId } from './trust';
 
-const DEFAULT_API_BASE = 'https://api.dexter.cash';
 const ANON_SIGN_BASE = '/api/passkey-anon/sign';
 
 // Resolve the immediate-mode capability probe at module load so the tap-time
@@ -40,6 +40,22 @@ const ANON_SIGN_BASE = '/api/passkey-anon/sign';
 primeImmediateSupport();
 
 export async function recoverWallet(config: RecoverWalletConfig = {}): Promise<RecoverOutcome> {
+  let apiBase: string;
+  let walletStore: WalletStoreMode;
+  try {
+    apiBase = resolveDexterApiBase(config.apiBase);
+  } catch (err) {
+    return netError('untrusted_api_base', err);
+  }
+  try {
+    walletStore = resolveWalletStoreMode(config.walletStore);
+  } catch (err) {
+    return {
+      ok: false,
+      reason: 'error',
+      error: err instanceof ConnectError ? err : new ConnectError('invalid_wallet_store_mode'),
+    };
+  }
   // Hosted-popup transport: on any non-Dexter origin the ceremony runs in a
   // popup on dexter.cash and the OUTCOME comes back over postMessage. A
   // completed ceremony travels ok:true even when the user declined — popup
@@ -49,8 +65,8 @@ export async function recoverWallet(config: RecoverWalletConfig = {}): Promise<R
     try {
       outcome = await openCeremonyPopup<RecoverOutcome>('recover', {
         connectHost: config.connectHost,
-        apiBase: config.apiBase,
         preferImmediate: config.preferImmediate,
+        ...(walletStore === 'provisional' ? { walletStore } : {}),
       });
     } catch (err) {
       const ce =
@@ -61,9 +77,10 @@ export async function recoverWallet(config: RecoverWalletConfig = {}): Promise<R
       if (ce.code === 'popup_closed') return { ok: false, reason: 'cancelled' };
       return { ok: false, reason: 'error', error: ce };
     }
-    // The receiver's inline run wrote dexter.cash localStorage only — persist
-    // on the CALLER's origin too (same discipline as enroll's popup path).
-    if (outcome.ok) {
+    // In commit mode the receiver's inline run wrote dexter.cash localStorage,
+    // so mirror it on the CALLER's origin (same discipline as enroll). In
+    // provisional mode neither origin may change its active handle/roster.
+    if (walletStore === 'commit' && outcome.ok) {
       setActiveHandle(outcome.userHandle, outcome.vault.walletLabel ?? undefined, outcome.credentialId);
     }
     return outcome;
@@ -77,7 +94,6 @@ export async function recoverWallet(config: RecoverWalletConfig = {}): Promise<R
     };
   }
 
-  const apiBase = (config.apiBase ?? DEFAULT_API_BASE).replace(/\/$/, '');
   const onPhase = config.onPhase;
 
   onPhase?.('challenge');
@@ -89,8 +105,21 @@ export async function recoverWallet(config: RecoverWalletConfig = {}): Promise<R
       body: '{}',
     });
     if (!res.ok) return { ok: false, reason: 'error', error: new ConnectError(await readErrorCode(res)) };
-    options = ((await res.json()) as { options: PublicKeyCredentialRequestOptionsJSON }).options;
+    const serverOptions = ((await res.json()) as {
+      options: PublicKeyCredentialRequestOptionsJSON;
+    }).options;
+    if (!serverOptions?.challenge) {
+      return {
+        ok: false,
+        reason: 'error',
+        error: new ConnectError('recover_challenge_malformed', 'no challenge in response'),
+      };
+    }
+    options = { ...serverOptions, rpId: resolveDexterRpId(serverOptions.rpId) };
   } catch (err) {
+    if (err instanceof ConnectError && err.code === 'untrusted_rp_id') {
+      return { ok: false, reason: 'error', error: err };
+    }
     return netError('recover_challenge_failed', err);
   }
 
@@ -170,10 +199,12 @@ export async function recoverWallet(config: RecoverWalletConfig = {}): Promise<R
     return netError('vault_status_failed', err);
   }
 
-  // Persist ONLY now that the vault is confirmed — and carry label +
-  // credentialId into the roster (the fe donor dropped both; eject's
-  // Signal-API prune wants the credentialId).
-  setActiveHandle(userHandle, vault.walletLabel ?? undefined, credentialId);
+  // In commit mode persist ONLY now that the vault is confirmed — and carry
+  // label + credentialId into the roster (eject's Signal-API prune wants the
+  // credentialId). Provisional callers explicitly commit after approval.
+  if (walletStore === 'commit') {
+    setActiveHandle(userHandle, vault.walletLabel ?? undefined, credentialId);
+  }
   return { ok: true, userHandle, credentialId, vault };
 }
 

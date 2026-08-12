@@ -16,8 +16,14 @@ import { useEffect, useId, useState, type ReactElement } from 'react';
 //             Its hermes://open/<name> handler launches/focuses the desktop
 //             app, but does not install the MCP; that remains a separate,
 //             explicitly labeled action after the command is copied.
-//  - Claude Code  copies a user-scoped HTTP MCP command. Remote OAuth is
-//                 completed from Claude Code's native /mcp flow when needed.
+//  - Claude web  opens Claude's custom-connector form with only the public
+//                display name and MCP endpoint prefilled. The user still
+//                reviews and adds the connector in Claude.
+//  - ChatGPT     opens the plugins page. ChatGPT has no supported MCP prefill,
+//                so consuming surfaces must keep the public MCP URL visible
+//                for the user to copy and paste.
+//  - Claude Code copies a user-scoped HTTP MCP command. Remote OAuth is
+//                completed from Claude Code's native /mcp flow when needed.
 //
 // Interaction contract: every action is labeled with exactly what it does,
 // nothing navigates by surprise, copy actions confirm visibly.
@@ -111,14 +117,19 @@ const VSCODE_MARK = 'data:image/svg+xml;base64,PHN2ZyB2aWV3Qm94PSIwIDAgMTAwIDEwM
 const HERMES_MARK = 'data:image/png;base64,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';
 const CLAUDE_MARK = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIiBjbGFzcz0idy1mdWxsIiBmaWxsPSJoc2woMTQuOCwgNjMuMSUsIDU5LjYlKSI+PHBhdGggZD0ibTE5LjYgNjYuNSAxOS43LTExIC4zLTEtLjMtLjVoLTFsLTMuMy0uMi0xMS4yLS4zTDE0IDUzbC05LjUtLjUtMi40LS41TDAgNDlsLjItMS41IDItMS4zIDIuOS4yIDYuMy41IDkuNS42IDYuOS40TDM4IDQ5LjFoMS42bC4yLS43LS41LS40LS40LS40TDI5IDQxbC0xMC42LTctNS42LTQuMS0zLTItMS41LTItLjYtNC4yIDIuNy0zIDMuNy4zLjkuMiAzLjcgMi45IDggNi4xTDM3IDM2bDEuNSAxLjIuNi0uNC4xLS4zLS43LTEuMUwzMyAyNWwtNi0xMC40LTIuNy00LjMtLjctMi42Yy0uMy0xLS40LTItLjQtM2wzLTQuMkwyOCAwbDQuMi42TDMzLjggMmwyLjYgNiA0LjEgOS4zTDQ3IDI5LjlsMiAzLjggMSAzLjQuMyAxaC43di0uNWwuNS03LjIgMS04LjcgMS0xMS4yLjMtMy4yIDEuNi0zLjggMy0yTDYxIDIuNmwyIDIuOS0uMyAxLjgtMS4xIDcuN0w1OSAyNy4xbC0xLjUgOC4yaC45bDEtMS4xIDQuMS01LjQgNi45LTguNiAzLTMuNUw3NyAxM2wyLjMtMS44aDQuM2wzLjEgNC43LTEuNCA0LjktNC40IDUuNi0zLjcgNC43LTUuMyA3LjEtMy4yIDUuNy4zLjRoLjdsMTItMi42IDYuNC0xLjEgNy42LTEuMyAzLjUgMS42LjQgMS42LTEuNCAzLjQtOC4yIDItOS42IDItMTQuMyAzLjMtLjIuMS4yLjMgNi40LjYgMi44LjJoNi44bDEyLjYgMSAzLjMgMiAxLjkgMi43LS4zIDItNS4xIDIuNi02LjgtMS42LTE2LTMuOC01LjQtMS4zaC0uOHYuNGw0LjYgNC41IDguMyA3LjVMODkgODAuMWwuNSAyLjQtMS4zIDItMS40LS4yLTkuMi03LTMuNi0zLTgtNi44aC0uNXYuN2wxLjggMi43IDkuOCAxNC43LjUgNC41LS43IDEuNC0yLjYgMS0yLjctLjYtNS44LTgtNi05LTQuNy04LjItLjUuNC0yLjkgMzAuMi0xLjMgMS41LTMgMS4yLTIuNS0yLTEuNC0zIDEuNC02LjIgMS42LTggMS4zLTYuNCAxLjItNy45LjctMi42di0uMkg0OUw0MyA3MmwtOSAxMi4zLTcuMiA3LjYtMS43LjctMy0xLjUuMy0yLjhMMjQgODZsMTAtMTIuOCA2LTcuOSA0LTQuNi0uMS0uNWgtLjNMMTcuMiA3Ny40bC00LjcuNi0yLTIgLjItMyAxLTEgOC01LjVaIj48L3BhdGg+PC9zdmc+';
 
-export type InstallApp = 'cursor' | 'vscode' | 'hermes' | 'claude-code';
+// Source asset: the existing OpenDexter client asset used by dexter-fe.
+const CHATGPT_MARK = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHhtbG5zOnhsaW5rPSJodHRwOi8vd3d3LnczLm9yZy8xOTk5L3hsaW5rIiB2aWV3Qm94PSIwIDAgMjQwNiAyNDA2Ij4KCTxwYXRoIGQ9Ik0xIDU3OC40QzEgMjU5LjUgMjU5LjUgMSA1NzguNCAxaDEyNDkuMWMzMTkgMCA1NzcuNSAyNTguNSA1NzcuNSA1NzcuNFYyNDA2SDU3OC40QzI1OS41IDI0MDYgMSAyMTQ3LjUgMSAxODI4LjZWNTc4LjR6IiBmaWxsPSIjNzRhYTljIi8+Cgk8cGF0aCBpZD0iYSIgZD0iTTExMDcuMyAyOTkuMWMtMTk3Ljk5OSAwLTM3My45IDEyNy4zLTQzNS4yIDMxNS4zTDY1MCA3NDMuNXY0MjcuOWMwIDIxLjQgMTEgNDAuNCAyOS40IDUxLjRsMzQ0LjUgMTk4LjUxNVY4MzMuM2guMXYtMjcuOUwxMzcyLjcgNjA0YzMzLjcxNS0xOS41MiA3MC40NC0zMi44NTcgMTA4LjQ3LTM5LjgyOEwxNDQ3LjYgNDUwLjNDMTM2MSAzNTMuNSAxMjM3LjEgMjk4LjUgMTEwNy4zIDI5OS4xem0wIDExNy41LS42LjZjNzkuNjk5IDAgMTU2LjMgMjcuNSAyMTcuNiA3OC40LTIuNSAxLjItNy40IDQuMy0xMSA2LjFMOTUyLjggNzA5LjNjLTE4LjQgMTAuNC0yOS40IDMwLTI5LjQgNTEuNFYxMjQ4bC0xNTUuMS04OS40Vjc1NS44Yy0uMS0xODcuMDk5IDE1MS42MDEtMzM4LjkgMzM5LTMzOS4yeiIgZmlsbD0iI2ZmZiIvPgoJPHVzZSB4bGluazpocmVmPSIjYSIgdHJhbnNmb3JtPSJyb3RhdGUoNjAgMTIwMyAxMjAzKSIvPgogIAk8dXNlIHhsaW5rOmhyZWY9IiNhIiB0cmFuc2Zvcm09InJvdGF0ZSgxMjAgMTIwMyAxMjAzKSIvPgoJPHVzZSB4bGluazpocmVmPSIjYSIgdHJhbnNmb3JtPSJyb3RhdGUoMTgwIDEyMDMgMTIwMykiLz4KCTx1c2UgeGxpbms6aHJlZj0iI2EiIHRyYW5zZm9ybT0icm90YXRlKDI0MCAxMjAzIDEyMDMpIi8+Cgk8dXNlIHhsaW5rOmhyZWY9IiNhIiB0cmFuc2Zvcm09InJvdGF0ZSgzMDAgMTIwMyAxMjAzKSIvPgoKPC9zdmc+';
+
+export type InstallApp = 'claude' | 'chatgpt' | 'cursor' | 'vscode' | 'hermes' | 'claude-code';
 
 export interface AppInstallButtonsProps {
   /** MCP endpoint to install. Default: OpenDexter. */
   mcpUrl?: string;
+  /** Human-facing connector name. Default: OpenDexter. */
+  displayName?: string;
   /** Server name written into the app's config. Default: opendexter. */
   serverName?: string;
-  /** Which app buttons to render, in order. Default: all four. */
+  /** Which app buttons to render, in order. Default: the four desktop clients. */
   apps?: InstallApp[];
   /** Stack full-width instead of a wrapping row. */
   block?: boolean;
@@ -128,8 +139,22 @@ export interface AppInstallButtonsProps {
 }
 
 const DEFAULT_MCP_URL = 'https://open.dexter.cash/mcp';
-const DEFAULT_NAME = 'opendexter';
-const ALL_APPS: InstallApp[] = ['cursor', 'vscode', 'hermes', 'claude-code'];
+const DEFAULT_DISPLAY_NAME = 'OpenDexter';
+const DEFAULT_SERVER_NAME = 'opendexter';
+const DEFAULT_APPS: InstallApp[] = ['cursor', 'vscode', 'hermes', 'claude-code'];
+
+export function claudeWebConnectorUrl(displayName: string, mcpUrl: string): string {
+  const query = new URLSearchParams({
+    modal: 'add-custom-connector',
+    connectorName: displayName,
+    connectorUrl: mcpUrl,
+  });
+  return `https://claude.ai/customize/connectors?${query.toString()}`;
+}
+
+export function chatgptPluginsUrl(): string {
+  return 'https://chatgpt.com/plugins';
+}
 
 export function cursorInstallUrl(name: string, mcpUrl: string): string {
   // btoa is global in every browser and in Node 16+ (test env included).
@@ -178,8 +203,9 @@ function appCx(block: boolean): string {
 export function AppInstallButtons(props: AppInstallButtonsProps): ReactElement {
   const {
     mcpUrl = DEFAULT_MCP_URL,
-    serverName = DEFAULT_NAME,
-    apps = ALL_APPS,
+    serverName = DEFAULT_SERVER_NAME,
+    displayName = serverName === DEFAULT_SERVER_NAME ? DEFAULT_DISPLAY_NAME : serverName,
+    apps = DEFAULT_APPS,
     block = false,
     className,
     onAction,
@@ -194,6 +220,32 @@ export function AppInstallButtons(props: AppInstallButtonsProps): ReactElement {
   const claudeErrorId = `${statusId}-claude-error`;
 
   const buttons: Partial<Record<InstallApp, ReactElement>> = {
+    claude: (
+      <a
+        key="claude"
+        className={appCx(block)}
+        href={claudeWebConnectorUrl(displayName, mcpUrl)}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={() => onAction?.('claude', 'deeplink')}
+      >
+        <img className="dx-appbtn__logo" src={CLAUDE_MARK} alt="" aria-hidden />
+        Open in Claude
+      </a>
+    ),
+    chatgpt: (
+      <a
+        key="chatgpt"
+        className={appCx(block)}
+        href={chatgptPluginsUrl()}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={() => onAction?.('chatgpt', 'deeplink')}
+      >
+        <img className="dx-appbtn__logo" src={CHATGPT_MARK} alt="" aria-hidden />
+        Open ChatGPT plugins
+      </a>
+    ),
     cursor: (
       <a
         key="cursor"
@@ -278,7 +330,7 @@ export function AppInstallButtons(props: AppInstallButtonsProps): ReactElement {
     <div
       className={['dx-appinstall', block ? 'dx-appinstall--block' : '', className ?? ''].filter(Boolean).join(' ')}
       role="group"
-      aria-label={`Add ${serverName} to an agent app`}
+      aria-label={`Add ${displayName} to an agent app`}
     >
       {apps.map((app) => buttons[app] ?? null)}
       <span className="dx-appinstall__sr-only" aria-live="polite" aria-atomic="true">

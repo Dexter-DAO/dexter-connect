@@ -146,6 +146,32 @@ describe('passkeyLogin', () => {
     expect(fetchMock).not.toHaveBeenCalled(); // bails before any network
     expect(mockStartAuth).not.toHaveBeenCalled();
   });
+
+  it('rejects a caller-controlled API base before fetch or WebAuthn', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      passkeyLogin({ transport: 'inline', apiBase: 'https://attacker.example' }),
+    ).rejects.toMatchObject({ code: 'untrusted_api_base' });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mockStartAuth).not.toHaveBeenCalled();
+  });
+
+  it('rejects an adjacent wallet-store mode before fetch, WebAuthn, or popup', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      passkeyLogin({
+        transport: 'popup',
+        walletStore: 'provisionally' as never,
+      }),
+    ).rejects.toMatchObject({ code: 'invalid_wallet_store_mode' });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mockStartAuth).not.toHaveBeenCalled();
+    expect(mockPopup).not.toHaveBeenCalled();
+  });
 });
 
 // ── Active-handle persistence (the bug: successful ceremonies left the store
@@ -187,12 +213,30 @@ describe('passkeyLogin — active-handle persistence', () => {
     expect(mockSetActiveHandle).not.toHaveBeenCalled();
   });
 
+  it('inline provisional: returns the verified vault without active-handle or roster writes', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => challengeResp })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ ...tokensResp, vault: fullVault }) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await passkeyLogin({ transport: 'inline', walletStore: 'provisional' });
+
+    expect(result.vault).toEqual(fullVault);
+    expect(mockSetActiveHandle).not.toHaveBeenCalled();
+  });
+
   it('popup: persists the active handle from the popup vault result', async () => {
     mockPopup.mockResolvedValueOnce({ session: tokensResp, vault: fullVault });
 
-    const result = await passkeyLogin({ transport: 'popup' });
+    const result = await passkeyLogin({
+      transport: 'popup',
+      apiBase: 'https://api.dexter.cash',
+    });
 
-    expect(mockPopup).toHaveBeenCalledWith('signin', expect.anything());
+    expect(mockPopup).toHaveBeenCalledWith('signin', {
+      connectHost: undefined,
+    });
     expect(result.vault).toEqual(fullVault);
     expect(mockSetActiveHandle).toHaveBeenCalledWith('u-handle', undefined, 'c-id');
   });
@@ -202,6 +246,22 @@ describe('passkeyLogin — active-handle persistence', () => {
 
     await passkeyLogin({ transport: 'popup' });
 
+    expect(mockSetActiveHandle).not.toHaveBeenCalled();
+  });
+
+  it('popup provisional: requests provisional host behavior and does not commit on the caller', async () => {
+    mockPopup.mockResolvedValueOnce({ session: tokensResp, vault: fullVault });
+
+    const result = await passkeyLogin({
+      transport: 'popup',
+      walletStore: 'provisional',
+    });
+
+    expect(mockPopup).toHaveBeenCalledWith('signin', {
+      connectHost: undefined,
+      walletStore: 'provisional',
+    });
+    expect(result.vault).toEqual(fullVault);
     expect(mockSetActiveHandle).not.toHaveBeenCalled();
   });
 
@@ -262,6 +322,14 @@ describe('continueWithDexter — popup persistence', () => {
     await expect(continueWithDexter({ transport: 'popup' })).rejects.toMatchObject({
       code: 'popup_closed',
     });
+    expect(mockSetActiveHandle).not.toHaveBeenCalled();
+  });
+
+  it('rejects a hostile API base before opening the hosted consent window', async () => {
+    await expect(
+      continueWithDexter({ transport: 'popup', apiBase: 'https://attacker.example' }),
+    ).rejects.toMatchObject({ code: 'untrusted_api_base' });
+    expect(mockPopup).not.toHaveBeenCalled();
     expect(mockSetActiveHandle).not.toHaveBeenCalled();
   });
 });

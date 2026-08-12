@@ -1,4 +1,11 @@
-import { ConnectError } from './types';
+import {
+  ConnectError,
+  type CeremonyOperation,
+  type HostedSignRequestPayload,
+  type WalletStoreMode,
+  resolveWalletStoreMode,
+} from './types';
+import { resolveDexterConnectHost } from './trust';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Hosted-popup transport — "Sign in with Dexter on ANY website."
@@ -11,7 +18,6 @@ import { ConnectError } from './types';
 // the same calls.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const DEFAULT_CONNECT_HOST = 'https://dexter.cash/connect';
 const POPUP_TIMEOUT_MS = 120_000;
 const CANONICAL_ORIGIN = 'https://dexter.cash';
 
@@ -29,10 +35,34 @@ export function shouldUsePopup(transport?: 'auto' | 'popup' | 'inline'): boolean
   return window.location.origin !== CANONICAL_ORIGIN;
 }
 
+interface PopupHelloMessage {
+  v: 1;
+  type: 'dexter-connect:hello';
+  requestId: string;
+  op: CeremonyOperation;
+}
+
+interface PopupHelloAckMessage {
+  v: 1;
+  type: 'dexter-connect:hello-ack';
+  requestId: string;
+  op: CeremonyOperation;
+}
+
+/** Sent exactly once, after hello/ack, and never represented in the URL. */
+interface PopupSignRequestMessage {
+  v: 1;
+  type: 'dexter-connect:sign-request';
+  requestId: string;
+  op: 'sign';
+  payload: HostedSignRequestPayload;
+}
+
 interface PopupResultMessage {
   v: 1;
   type: 'dexter-connect:result';
   requestId: string;
+  op: CeremonyOperation;
   ok: boolean;
   result?: unknown;
   error?: { code: string; message?: string };
@@ -41,25 +71,35 @@ interface PopupResultMessage {
 /**
  * Run a ceremony (sign-in or create) via the hosted popup, returning the SAME
  * shape the inline path returns (SignInResult | CreateWalletResult). Strict
- * checks: the result is accepted only from the hosted origin and only when its
- * requestId nonce matches this call. Rejects on block / close / timeout / error.
+ * checks: a browser-stamped hello/ack binds the arbitrary opener origin to the
+ * exact popup window; results require the hosted origin, popup source, request
+ * nonce, and operation. Rejects on block / close / timeout / error.
  */
 export function openCeremonyPopup<T>(
-  op: 'signin' | 'create' | 'continue' | 'recover',
-  config: { connectHost?: string; name?: string; apiBase?: string; preferImmediate?: boolean } = {},
+  op: CeremonyOperation,
+  config: {
+    connectHost?: string;
+    name?: string;
+    preferImmediate?: boolean;
+    walletStore?: WalletStoreMode;
+    signRequest?: HostedSignRequestPayload;
+  } = {},
 ): Promise<T> {
   if (typeof window === 'undefined') {
     return Promise.reject(new ConnectError('not_browser', 'popup ceremony requires a browser'));
   }
-  const host = (config.connectHost ?? DEFAULT_CONNECT_HOST).replace(/\/$/, '');
+  // The opener may be any website. The credential-handling popup may not.
+  const host = resolveDexterConnectHost(config.connectHost);
   const hostOrigin = new URL(host).origin;
   const openerOrigin = window.location.origin;
   const requestId = makeNonce();
+  const signRequest = snapshotSignRequest(op, config.signRequest);
+  const walletStore = resolveWalletStoreMode(config.walletStore);
 
   const params = new URLSearchParams({ v: '1', op, requestId, origin: openerOrigin });
   if (config.name) params.set('name', config.name);
-  if (config.apiBase) params.set('apiBase', config.apiBase);
   if (config.preferImmediate) params.set('preferImmediate', '1');
+  if (walletStore === 'provisional') params.set('walletStore', 'provisional');
   const url = `${host}?${params.toString()}`;
 
   return new Promise<T>((resolve, reject) => {
@@ -72,10 +112,54 @@ export function openCeremonyPopup<T>(
     }
 
     let settled = false;
+    let handshakeComplete = false;
     const onMessage = (event: MessageEvent) => {
       if (event.origin !== hostOrigin) return; // only trust the hosted origin
-      const data = event.data as PopupResultMessage | undefined;
-      if (!data || data.type !== 'dexter-connect:result' || data.requestId !== requestId) return;
+      if (event.source !== popup) return; // only trust the exact window we opened
+      const data = event.data as PopupHelloMessage | PopupResultMessage | undefined;
+      if (!data || data.v !== 1 || data.requestId !== requestId || data.op !== op) return;
+
+      if (data.type === 'dexter-connect:hello') {
+        // A repeated hello cannot trigger a second sensitive request.
+        if (handshakeComplete) return;
+        const ack: PopupHelloAckMessage = {
+          v: 1,
+          type: 'dexter-connect:hello-ack',
+          requestId,
+          op,
+        };
+        try {
+          // targetOrigin is the browser-stamped hosted origin, never query data.
+          popup.postMessage(ack, event.origin);
+          if (signRequest) {
+            const request: PopupSignRequestMessage = {
+              v: 1,
+              type: 'dexter-connect:sign-request',
+              requestId,
+              op: 'sign',
+              payload: signRequest,
+            };
+            // The raw operation and vault identity cross only this exact
+            // browser-stamped source/origin boundary, after hello/ack.
+            popup.postMessage(request, event.origin);
+          }
+          handshakeComplete = true;
+        } catch (err) {
+          finish(() =>
+            reject(
+              new ConnectError(
+                'popup_handshake_failed',
+                err instanceof Error ? err.message : String(err),
+              ),
+            ),
+          );
+        }
+        return;
+      }
+
+      // A result is meaningful only after the exact popup completed the
+      // browser-stamped origin handshake for this exact operation.
+      if (data.type !== 'dexter-connect:result' || !handshakeComplete) return;
       if (data.ok) finish(() => resolve(data.result as T));
       else
         finish(() =>
@@ -107,6 +191,64 @@ export function openCeremonyPopup<T>(
 
     window.addEventListener('message', onMessage);
   });
+}
+
+function snapshotSignRequest(
+  op: CeremonyOperation,
+  request?: HostedSignRequestPayload,
+): HostedSignRequestPayload | undefined {
+  if (op !== 'sign') {
+    if (request !== undefined) {
+      throw new ConnectError('unexpected_sign_request', 'sign payload requires op=sign');
+    }
+    return undefined;
+  }
+  if (
+    !request ||
+    !(request.operationMessage instanceof Uint8Array) ||
+    request.operationMessage.length === 0 ||
+    request.operationMessage.length > 4_096
+  ) {
+    throw new ConnectError('missing_sign_request', 'hosted signing requires raw operation bytes');
+  }
+  if (isAccountProofOperation(request.operationMessage)) {
+    throw new ConnectError(
+      'unsupported_operation',
+      'account-claim proofs cannot be requested by a third-party website',
+    );
+  }
+  const vault = request.vault;
+  if (
+    !vault ||
+    !vault.vaultPda ||
+    !vault.publicKey ||
+    !vault.userHandle ||
+    !vault.credentialId
+  ) {
+    throw new ConnectError('invalid_sign_identity', 'hosted signing requires a complete vault identity');
+  }
+  return {
+    // Snapshot before opening the window so caller mutation cannot change what
+    // the user sees/signs after the ceremony begins.
+    operationMessage: new Uint8Array(request.operationMessage),
+    vault: {
+      vaultPda: vault.vaultPda,
+      publicKey: vault.publicKey,
+      userHandle: vault.userHandle,
+      credentialId: vault.credentialId,
+      ...(vault.walletLabel !== undefined ? { walletLabel: vault.walletLabel } : {}),
+    },
+  };
+}
+
+/** `prove_passkey` account-login intent: reserved to Dexter account claim. */
+function isAccountProofOperation(operation: Uint8Array): boolean {
+  const prefix = new TextEncoder().encode('siwx_login');
+  if (operation.length !== prefix.length + 32) return false;
+  for (let i = 0; i < prefix.length; i += 1) {
+    if (operation[i] !== prefix[i]) return false;
+  }
+  return true;
 }
 
 function popupFeatures(): string {

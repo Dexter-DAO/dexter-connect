@@ -4,6 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   AppInstallButtons,
   claudeCodeInstallCommand,
+  claudeWebConnectorUrl,
+  chatgptPluginsUrl,
   cursorInstallUrl,
   ensureAppInstallStyles,
   hermesInstallCommand,
@@ -39,6 +41,26 @@ beforeEach(() => {
  * client contract exactly or the first click dead-ends.
  */
 describe('AppInstallButtons — install-link builders', () => {
+  it('claude web: prefills only the public display name and MCP endpoint', () => {
+    const link = claudeWebConnectorUrl('OpenDexter', MCP_URL);
+    const target = new URL(link);
+
+    expect(link).toBe(
+      'https://claude.ai/customize/connectors?modal=add-custom-connector&connectorName=OpenDexter&connectorUrl=https%3A%2F%2Fopen.dexter.cash%2Fmcp',
+    );
+    expect(target.origin).toBe('https://claude.ai');
+    expect(target.pathname).toBe('/customize/connectors');
+    expect([...target.searchParams.keys()]).toEqual([
+      'modal',
+      'connectorName',
+      'connectorUrl',
+    ]);
+  });
+
+  it('chatgpt: opens the plugins page without claiming unsupported prefill', () => {
+    expect(chatgptPluginsUrl()).toBe('https://chatgpt.com/plugins');
+  });
+
   it('cursor: documented deeplink with base64({url}) config', () => {
     const link = cursorInstallUrl('opendexter', MCP_URL);
     expect(link.startsWith('cursor://anysphere.cursor-deeplink/mcp/install?name=opendexter&config=')).toBe(true);
@@ -67,6 +89,37 @@ describe('AppInstallButtons — install-link builders', () => {
   });
 });
 
+describe('AppInstallButtons — hosted web handoffs', () => {
+  it('uses displayName for people and serverName for machine configuration', async () => {
+    const view = await render(
+      <AppInstallButtons
+        apps={['claude', 'chatgpt', 'cursor']}
+        displayName="Dexter Wallet"
+        serverName="dexter-wallet"
+      />,
+    );
+    const links = [...view.container.querySelectorAll<HTMLAnchorElement>('a.dx-appbtn')];
+    const claude = links.find((link) => link.textContent?.includes('Open in Claude'));
+    const chatgpt = links.find((link) => link.textContent?.includes('Open ChatGPT plugins'));
+    const cursor = links.find((link) => link.textContent?.includes('Add to Cursor'));
+
+    expect(view.container.querySelector('[role="group"]')?.getAttribute('aria-label')).toBe(
+      'Add Dexter Wallet to an agent app',
+    );
+    expect(claude?.getAttribute('href')).toBe(
+      claudeWebConnectorUrl('Dexter Wallet', MCP_URL),
+    );
+    expect(claude?.getAttribute('target')).toBe('_blank');
+    expect(claude?.getAttribute('rel')).toBe('noopener noreferrer');
+    expect(chatgpt?.getAttribute('href')).toBe('https://chatgpt.com/plugins');
+    expect(chatgpt?.getAttribute('target')).toBe('_blank');
+    expect(chatgpt?.getAttribute('rel')).toBe('noopener noreferrer');
+    expect(cursor?.getAttribute('href')).toContain('name=dexter-wallet');
+
+    await view.unmount();
+  });
+});
+
 describe('AppInstallButtons — copy journey', () => {
   it('copies the Hermes OAuth command without navigating, then offers explicit launch/focus', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
@@ -90,7 +143,7 @@ describe('AppInstallButtons — copy journey', () => {
     expect(open?.textContent).toBe('Open Hermes');
     expect(open?.getAttribute('href')).toBe('hermes://open/opendexter');
     expect(view.container.querySelector('[role="group"]')?.getAttribute('aria-label')).toBe(
-      'Add opendexter to an agent app',
+      'Add OpenDexter to an agent app',
     );
     expect(onAction).toHaveBeenCalledTimes(1);
     expect(onAction).toHaveBeenCalledWith('hermes', 'copied');
