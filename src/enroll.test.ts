@@ -122,10 +122,59 @@ describe('createWallet — spendPolicy on the /initialize body', () => {
   });
 });
 
-// ── Third-party-origin create runs in the hosted popup. The bug: the popup
-//    early-return handed back the CreateWalletResult without persisting, so the
-//    caller's localStorage stayed empty after a successful create. Fix persists
-//    from the returned result on the CALLER's origin.
+describe('createWallet — wallet-store modes', () => {
+  beforeEach(() => {
+    mockStartReg.mockResolvedValue(regResponse);
+    vi.stubGlobal('navigator', { credentials: {} });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.clearAllMocks();
+  });
+
+  it('keeps the historical inline commit behavior when walletStore is omitted', async () => {
+    const fetchMock = mockCeremonyFetch();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await createWallet({ transport: 'inline', name: 'Committed Wallet' });
+
+    expect(result).toMatchObject({
+      handle: 'handle-xyz',
+      credentialId: 'cred-abc',
+      vault: { vaultPda: 'vpda', userHandle: 'handle-xyz' },
+    });
+    expect(mockSetActiveHandle).toHaveBeenCalledOnce();
+    expect(mockSetActiveHandle).toHaveBeenCalledWith(
+      'handle-xyz',
+      'Committed Wallet',
+      'cred-abc',
+    );
+  });
+
+  it('returns the completed inline wallet provisionally without active-handle or roster writes', async () => {
+    const fetchMock = mockCeremonyFetch();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await createWallet({
+      transport: 'inline',
+      name: 'Provisional Wallet',
+      walletStore: 'provisional',
+    });
+
+    expect(result).toMatchObject({
+      handle: 'handle-xyz',
+      credentialId: 'cred-abc',
+      vault: { vaultPda: 'vpda', userHandle: 'handle-xyz' },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(mockStartReg).toHaveBeenCalledOnce();
+    expect(mockSetActiveHandle).not.toHaveBeenCalled();
+  });
+});
+
+// ── Third-party-origin create runs in the hosted popup. Commit mode mirrors the
+//    returned wallet on the CALLER's origin. Provisional mode passes the exact
+//    host flag and keeps both host and caller stores untouched.
 describe('createWallet — popup persistence', () => {
   const popupResult = {
     handle: 'popup-handle',
@@ -163,6 +212,41 @@ describe('createWallet — popup persistence', () => {
     expect(out).toEqual(popupResult);
   });
 
+  it('keeps explicit popup commit mode backward-compatible and out of the URL', async () => {
+    mockPopup.mockResolvedValueOnce(popupResult);
+
+    const out = await createWallet({
+      transport: 'popup',
+      name: 'Popup Wallet',
+      walletStore: 'commit',
+    });
+
+    expect(mockPopup).toHaveBeenCalledWith('create', {
+      connectHost: undefined,
+      name: 'Popup Wallet',
+    });
+    expect(mockSetActiveHandle).toHaveBeenCalledWith('popup-handle', 'Popup Wallet', 'popup-cred');
+    expect(out).toEqual(popupResult);
+  });
+
+  it('requests exact provisional host behavior and does not commit on the caller origin', async () => {
+    mockPopup.mockResolvedValueOnce(popupResult);
+
+    const out = await createWallet({
+      transport: 'popup',
+      name: 'Popup Wallet',
+      walletStore: 'provisional',
+    });
+
+    expect(mockPopup).toHaveBeenCalledWith('create', {
+      connectHost: undefined,
+      name: 'Popup Wallet',
+      walletStore: 'provisional',
+    });
+    expect(mockSetActiveHandle).not.toHaveBeenCalled();
+    expect(out).toEqual(popupResult);
+  });
+
   it('does NOT persist when the ceremony is rejected', async () => {
     mockPopup.mockRejectedValueOnce(new ConnectError('popup_closed'));
 
@@ -182,6 +266,22 @@ describe('createWallet — popup persistence', () => {
     expect(mockPopup).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
     expect(mockStartReg).not.toHaveBeenCalled();
+  });
+
+  it('rejects an adjacent wallet-store mode before popup, fetch, or WebAuthn', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      createWallet({
+        transport: 'popup',
+        walletStore: 'provisionally' as never,
+      }),
+    ).rejects.toMatchObject({ code: 'invalid_wallet_store_mode' });
+    expect(mockPopup).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mockStartReg).not.toHaveBeenCalled();
+    expect(mockSetActiveHandle).not.toHaveBeenCalled();
   });
 });
 
