@@ -12,14 +12,20 @@
 //   3. POST /api/passkey-anon/enroll/complete    → { credentialId, publicKey, userHandle }
 //   4. POST /api/passkey-vault-anon/initialize   → the vault (counterfactual; no
 //                                                   swig deployed yet)
-//   5. setActiveHandle(handle, name, credentialId) — record in the canonical store
+//   5. commit mode only: setActiveHandle(handle, name, credentialId) — record in
+//      the canonical store after successful creation
 //
 // The name is set at creation, which is the only moment a passkey label is
 // GUARANTEED to stick in the OS keychain (no dependence on the post-hoc Signal
 // API, which some platforms no-op). Blank name → the brand default.
 
-import type { ConnectVault, DexterConnectConfig, CeremonyPhase } from './types';
-import { ConnectError } from './types';
+import type {
+  ConnectVault,
+  DexterConnectConfig,
+  CeremonyPhase,
+  WalletStoreMode,
+} from './types';
+import { ConnectError, resolveWalletStoreMode } from './types';
 import { startRegistration } from '@simplewebauthn/browser';
 import type {
   RegistrationResponseJSON,
@@ -35,6 +41,12 @@ import { DEXTER_RP_ID, resolveDexterApiBase, resolveDexterRpId } from './trust';
 const DEFAULT_WALLET_NAME = 'Dexter Wallet';
 
 export interface CreateWalletConfig extends DexterConnectConfig {
+  /**
+   * Wallet-store behavior after successful creation. Defaults to `commit` for
+   * backward compatibility. Use `provisional` when the created wallet must
+   * pass a separate approval before becoming active.
+   */
+  walletStore?: WalletStoreMode;
   /** Label for the passkey in the OS keychain AND the wallet roster. Set at
    *  creation — the only moment naming is guaranteed to stick. Default "Dexter Wallet". */
   name?: string;
@@ -66,7 +78,9 @@ export interface CreateWalletResult {
 }
 
 /**
- * Mint a brand-new Dexter wallet (passkey + vault) and make it the active wallet.
+ * Mint a brand-new Dexter wallet (passkey + vault). Commit mode (the default)
+ * makes it active immediately; provisional mode returns it without changing
+ * the active-wallet store.
  *
  * One passkey approval. Throws ConnectError on any failed leg (the `code` is the
  * server's error string, or webauthn_failed / no_credential for the ceremony).
@@ -74,6 +88,9 @@ export interface CreateWalletResult {
 export async function createWallet(
   config: CreateWalletConfig = {},
 ): Promise<CreateWalletResult> {
+  // Validate before popup, fetch, or WebAuthn. Only the exact public modes are
+  // accepted; adjacent strings may not start a wallet-creation ceremony.
+  const walletStore = resolveWalletStoreMode(config.walletStore);
   const apiBase = resolveDexterApiBase(config.apiBase);
   resolveDexterRpId(config.rpId);
   // Hosted-popup transport: on any non-Dexter origin, run the create ceremony in
@@ -82,12 +99,15 @@ export async function createWallet(
     const result = await openCeremonyPopup<CreateWalletResult>('create', {
       connectHost: config.connectHost,
       name: config.name,
+      ...(walletStore === 'provisional' ? { walletStore } : {}),
     });
-    // The ceremony ran on dexter.cash (its localStorage), so a third-party-origin
-    // create would otherwise leave THIS caller's store empty. Persist from the
-    // returned result on the caller's origin — the result's label wins (the
-    // user may have typed the name on the hosted page, not in our config).
-    setActiveHandle(result.handle, result.label ?? config.name, result.credentialId);
+    // In commit mode the ceremony ran on dexter.cash (its localStorage), so
+    // mirror the returned wallet on THIS caller's origin. In provisional mode
+    // neither origin may change its active handle/roster. The result's label
+    // wins because the user may have typed it on the hosted page.
+    if (walletStore === 'commit') {
+      setActiveHandle(result.handle, result.label ?? config.name, result.credentialId);
+    }
     return result;
   }
   if (typeof navigator === 'undefined' || !navigator.credentials) {
@@ -126,9 +146,12 @@ export async function createWallet(
     config.name?.trim() || undefined,
   );
 
-  // Record in the canonical store — the label matches the passkey's keychain
-  // entry, and storing the credentialId lets a later eject() auto-prune it.
-  setActiveHandle(enrolled.userHandle, name, enrolled.credentialId);
+  // Commit mode records the canonical store entry: its label matches the
+  // passkey's keychain entry, and credentialId lets eject() auto-prune it.
+  // Provisional mode returns the same completed Vault without this write.
+  if (walletStore === 'commit') {
+    setActiveHandle(enrolled.userHandle, name, enrolled.credentialId);
+  }
 
   return {
     handle: enrolled.userHandle,

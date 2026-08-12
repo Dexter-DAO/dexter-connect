@@ -119,9 +119,13 @@ if (result.vault) {
 
 `provisional` suppresses both active-handle and wallet-roster writes on the
 hosted Dexter origin and the calling origin. It does not weaken passkey
-verification or persist a second identity. `recoverWallet` accepts the same
-option. The only supported modes are exact `commit` and `provisional`; omitted
-means `commit`.
+verification or persist a second identity. `recoverWallet`, `createWallet`, and
+every terminal sign-in/create branch of `continueWithDexter` accept the same
+option. A provisional creation still completes the passkey and Vault ceremony
+and returns the full `CreateWalletResult`; explicitly call
+`setActiveHandle(result.handle, result.label ?? undefined, result.credentialId)`
+only after the separate approval succeeds. The only supported modes are exact
+`commit` and `provisional`; omitted means `commit`.
 
 ## Verify the session on your server
 

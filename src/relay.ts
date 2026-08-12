@@ -5,6 +5,7 @@ import type {
   ConnectVault,
   SignInResult,
   CeremonyPhase,
+  WalletStoreMode,
 } from './types';
 import { ConnectError, resolveWalletStoreMode } from './types';
 import { startAuthentication, browserSupportsWebAuthn } from '@simplewebauthn/browser';
@@ -126,7 +127,9 @@ export async function continueWithDexter(
   config: CreateWalletConfig = {},
   onPhase?: (phase: CeremonyPhase) => void,
 ): Promise<ContinueResult> {
-  // Validate before either opening the trusted popup or touching WebAuthn.
+  // Validate before either opening the trusted popup, fetching, reading the
+  // wallet store, or touching WebAuthn.
+  const walletStore = resolveWalletStoreMode(config.walletStore);
   resolveDexterApiBase(config.apiBase);
   // Off-origin: the popup on dexter.cash decides (it alone can see the
   // dexter.cash keychain/handle); only terminal outcomes ride back.
@@ -134,22 +137,25 @@ export async function continueWithDexter(
     const result = await openCeremonyPopup<ContinueResult>('continue', {
       connectHost: config.connectHost,
       name: config.name,
+      ...(walletStore === 'provisional' ? { walletStore } : {}),
     });
-    // Persist the active handle for whichever branch the popup resolved. A create
-    // carries the identity at the top level; a signin only has one when the
-    // server returned a vault (guarded). Non-terminal kinds carry no identity.
-    if (result.kind === 'create') {
-      // The result's label wins — the name may have been typed on the hosted page.
-      setActiveHandle(result.handle, result.label ?? config.name, result.credentialId);
-    } else if (result.kind === 'signin' && result.vault) {
-      setActiveHandle(result.vault.userHandle, result.vault.walletLabel ?? undefined, result.vault.credentialId);
+    // Commit mode mirrors whichever terminal identity the popup resolved. In
+    // provisional mode neither the hosted nor caller origin may change its
+    // active handle/roster. Non-terminal kinds carry no identity.
+    if (walletStore === 'commit') {
+      if (result.kind === 'create') {
+        // The result's label wins — the name may have been typed on the hosted page.
+        setActiveHandle(result.handle, result.label ?? config.name, result.credentialId);
+      } else if (result.kind === 'signin' && result.vault) {
+        setActiveHandle(result.vault.userHandle, result.vault.walletLabel ?? undefined, result.vault.credentialId);
+      }
     }
     return result;
   }
 
   // Inline — keychain-first probe.
   if (await immediateGetSupported()) {
-    const probe = await immediatePasskeyLogin(config, onPhase);
+    const probe = await immediatePasskeyLogin(config, onPhase, walletStore);
     if (probe.outcome === 'signin') return { kind: 'signin', ...probe.result };
     if (probe.outcome === 'cancelled') return { kind: 'cancelled' };
     // outcome === 'no_credential' — proven empty device; create needs consent.
@@ -173,6 +179,7 @@ export async function continueWithDexter(
 async function immediatePasskeyLogin(
   config: DexterConnectConfig,
   onPhase?: (phase: CeremonyPhase) => void,
+  walletStore: WalletStoreMode = 'commit',
 ): Promise<
   | { outcome: 'signin'; result: SignInResult }
   | { outcome: 'no_credential' }
@@ -198,7 +205,7 @@ async function immediatePasskeyLogin(
   }
   onPhase?.('verifying');
   const result = await submitLogin(apiBase, response);
-  if (result.vault) {
+  if (walletStore === 'commit' && result.vault) {
     setActiveHandle(
       result.vault.userHandle,
       result.vault.walletLabel ?? undefined,

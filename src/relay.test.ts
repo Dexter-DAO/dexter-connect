@@ -292,8 +292,48 @@ describe('continueWithDexter — popup persistence', () => {
     const result = await continueWithDexter({ transport: 'popup', name: 'My Wallet' });
 
     expect(result.kind).toBe('create');
-    expect(mockPopup).toHaveBeenCalledWith('continue', expect.anything());
+    expect(mockPopup).toHaveBeenCalledWith('continue', {
+      connectHost: undefined,
+      name: 'My Wallet',
+    });
     expect(mockSetActiveHandle).toHaveBeenCalledWith('new-handle', 'My Wallet', 'new-cred');
+  });
+
+  it.each([
+    [
+      'create',
+      {
+        kind: 'create' as const,
+        handle: 'new-handle',
+        credentialId: 'new-cred',
+        vault: { ...fullVault, userHandle: 'new-handle', credentialId: 'new-cred' },
+        label: 'Created Wallet',
+      },
+    ],
+    [
+      'signin',
+      {
+        kind: 'signin' as const,
+        session: tokensResp,
+        vault: { ...fullVault, userHandle: 'signin-handle', credentialId: 'signin-cred' },
+      },
+    ],
+  ])('popup provisional %s: propagates exact mode and performs zero caller writes', async (_kind, popupResult) => {
+    mockPopup.mockResolvedValueOnce(popupResult);
+
+    const result = await continueWithDexter({
+      transport: 'popup',
+      name: 'My Wallet',
+      walletStore: 'provisional',
+    });
+
+    expect(result).toEqual(popupResult);
+    expect(mockPopup).toHaveBeenCalledWith('continue', {
+      connectHost: undefined,
+      name: 'My Wallet',
+      walletStore: 'provisional',
+    });
+    expect(mockSetActiveHandle).not.toHaveBeenCalled();
   });
 
   it('popup signin: persists guarded on the vault userHandle', async () => {
@@ -330,6 +370,24 @@ describe('continueWithDexter — popup persistence', () => {
       continueWithDexter({ transport: 'popup', apiBase: 'https://attacker.example' }),
     ).rejects.toMatchObject({ code: 'untrusted_api_base' });
     expect(mockPopup).not.toHaveBeenCalled();
+    expect(mockSetActiveHandle).not.toHaveBeenCalled();
+  });
+
+  it('rejects an adjacent wallet-store mode before popup, fetch, WebAuthn, or wallet reads', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      continueWithDexter({
+        transport: 'popup',
+        walletStore: 'provisionally' as never,
+      }),
+    ).rejects.toMatchObject({ code: 'invalid_wallet_store_mode' });
+    expect(mockPopup).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mockStartAuth).not.toHaveBeenCalled();
+    expect(mockImmSupported).not.toHaveBeenCalled();
+    expect(mockGetHandle).not.toHaveBeenCalled();
     expect(mockSetActiveHandle).not.toHaveBeenCalled();
   });
 });
@@ -386,6 +444,26 @@ describe('continueWithDexter — keychain-first inline decisions', () => {
     expect(mockSetActiveHandle).toHaveBeenCalledWith('u-handle', 'voice test', 'c-id');
   });
 
+  it('immediate probe provisional sign-in returns the vault with zero store writes', async () => {
+    mockImmSupported.mockResolvedValue(true);
+    mockImmAuth.mockResolvedValue(authResponse);
+    mockGetHandle.mockReturnValue(null);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => challengeResp })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ ...tokensResp, vault: vaultWithLabel }) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await continueWithDexter({
+      transport: 'inline',
+      walletStore: 'provisional',
+    });
+
+    expect(result.kind).toBe('signin');
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(mockSetActiveHandle).not.toHaveBeenCalled();
+  });
+
   it('immediate fast-fail without an authored spendPolicy → needs_create (no consent, no birth)', async () => {
     mockImmSupported.mockResolvedValue(true);
     mockImmAuth.mockRejectedValue(new DOMException('no credential', 'NotAllowedError'));
@@ -421,6 +499,31 @@ describe('continueWithDexter — keychain-first inline decisions', () => {
     expect(mockCreate).toHaveBeenCalledTimes(1);
   });
 
+  it('immediate fast-fail provisional create propagates exact mode and adds no relay write', async () => {
+    mockImmSupported.mockResolvedValue(true);
+    mockImmAuth.mockRejectedValue(new DOMException('no credential', 'NotAllowedError'));
+    mockClassify.mockReturnValue(true);
+    mockCreate.mockResolvedValue({
+      handle: 'new-h',
+      credentialId: 'new-c',
+      vault: { ...fullVault, walletLabel: 'fresh' },
+      label: 'fresh',
+    });
+    const fetchMock = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => challengeResp });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const config = {
+      transport: 'inline' as const,
+      walletStore: 'provisional' as const,
+      spendPolicy: { spendLimitAtomic: '5000000', sessionTtlSeconds: '2592000' },
+    };
+    const result = await continueWithDexter(config);
+
+    expect(result.kind).toBe('create');
+    expect(mockCreate).toHaveBeenCalledWith({ ...config, onPhase: undefined });
+    expect(mockSetActiveHandle).not.toHaveBeenCalled();
+  });
+
   it('no immediate support + a local handle → modal sign-in (passkey lived here)', async () => {
     mockImmSupported.mockResolvedValue(false);
     mockGetHandle.mockReturnValue('local-h');
@@ -436,6 +539,27 @@ describe('continueWithDexter — keychain-first inline decisions', () => {
 
     expect(result.kind).toBe('signin');
     expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it('no immediate support + local handle honors provisional modal sign-in', async () => {
+    mockImmSupported.mockResolvedValue(false);
+    mockGetHandle.mockReturnValue('local-h');
+    mockSupports.mockReturnValue(true);
+    mockStartAuth.mockResolvedValue(authResponse);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => challengeResp })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ ...tokensResp, vault: vaultWithLabel }) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await continueWithDexter({
+      transport: 'inline',
+      walletStore: 'provisional',
+    });
+
+    expect(result.kind).toBe('signin');
+    expect(mockCreate).not.toHaveBeenCalled();
+    expect(mockSetActiveHandle).not.toHaveBeenCalled();
   });
 
   it('no immediate support + no local handle → needs_choice, never guess-create', async () => {
