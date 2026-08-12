@@ -119,6 +119,33 @@ describe('recoverWallet — inline leg', () => {
     expect(phases).toEqual(['challenge', 'passkey', 'verifying']);
   });
 
+  it('inline provisional: returns the verified wallet without active-handle or roster writes', async () => {
+    vi.stubGlobal('fetch', mockCeremonyFetch());
+
+    const out = await recoverWallet({ transport: 'inline', walletStore: 'provisional' });
+
+    expect(out.ok).toBe(true);
+    if (out.ok) expect(out.vault.vaultPda).toBe('vpda');
+    expect(mockSetActiveHandle).not.toHaveBeenCalled();
+  });
+
+  it('rejects an adjacent wallet-store mode before fetch, WebAuthn, or popup', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const out = await recoverWallet({
+      transport: 'popup',
+      walletStore: 'provisionally' as never,
+    });
+
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.error?.code).toBe('invalid_wallet_store_mode');
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mockStartAuth).not.toHaveBeenCalled();
+    expect(mockPopup).not.toHaveBeenCalled();
+    expect(mockSetActiveHandle).not.toHaveBeenCalled();
+  });
+
   it('verify 404 (passkey with no server row) → no_credential, nothing persisted', async () => {
     const fetchMock = mockCeremonyFetch({
       verify: { ok: false, status: 404, json: async () => ({ error: 'credential_not_found' }) },
@@ -236,6 +263,24 @@ describe('recoverWallet — popup leg', () => {
     mockPopup.mockResolvedValue({ ok: false, reason: 'no_credential' });
     const out = await recoverWallet({ transport: 'popup' });
     expect(out).toEqual({ ok: false, reason: 'no_credential' });
+    expect(mockSetActiveHandle).not.toHaveBeenCalled();
+  });
+
+  it('popup provisional: requests provisional host behavior and does not commit on the caller', async () => {
+    mockPopup.mockResolvedValue(okOutcome);
+
+    const out = await recoverWallet({
+      transport: 'popup',
+      preferImmediate: true,
+      walletStore: 'provisional',
+    });
+
+    expect(out).toEqual(okOutcome);
+    expect(mockPopup).toHaveBeenCalledWith('recover', {
+      connectHost: undefined,
+      preferImmediate: true,
+      walletStore: 'provisional',
+    });
     expect(mockSetActiveHandle).not.toHaveBeenCalled();
   });
 

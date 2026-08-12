@@ -95,6 +95,34 @@ import { passkeyLogin } from '@dexterai/connect';
 const { session, vault } = await passkeyLogin({ transport: 'auto' });
 ```
 
+By default, a successful sign-in immediately makes its wallet active in the
+browser wallet store, preserving existing behavior. A flow that must finish a
+separate account-level approval can instead keep the result provisional:
+
+```ts
+import { passkeyLogin, setActiveHandle } from '@dexterai/connect';
+
+const result = await passkeyLogin({
+  transport: 'auto',
+  walletStore: 'provisional',
+});
+
+// Only after your approval has bound this exact wallet to the account:
+if (result.vault) {
+  setActiveHandle(
+    result.vault.userHandle,
+    result.vault.walletLabel ?? undefined,
+    result.vault.credentialId,
+  );
+}
+```
+
+`provisional` suppresses both active-handle and wallet-roster writes on the
+hosted Dexter origin and the calling origin. It does not weaken passkey
+verification or persist a second identity. `recoverWallet` accepts the same
+option. The only supported modes are exact `commit` and `provisional`; omitted
+means `commit`.
+
 ## Verify the session on your server
 
 ```ts

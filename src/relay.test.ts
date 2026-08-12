@@ -157,6 +157,21 @@ describe('passkeyLogin', () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(mockStartAuth).not.toHaveBeenCalled();
   });
+
+  it('rejects an adjacent wallet-store mode before fetch, WebAuthn, or popup', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      passkeyLogin({
+        transport: 'popup',
+        walletStore: 'provisionally' as never,
+      }),
+    ).rejects.toMatchObject({ code: 'invalid_wallet_store_mode' });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mockStartAuth).not.toHaveBeenCalled();
+    expect(mockPopup).not.toHaveBeenCalled();
+  });
 });
 
 // ── Active-handle persistence (the bug: successful ceremonies left the store
@@ -198,6 +213,19 @@ describe('passkeyLogin — active-handle persistence', () => {
     expect(mockSetActiveHandle).not.toHaveBeenCalled();
   });
 
+  it('inline provisional: returns the verified vault without active-handle or roster writes', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => challengeResp })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ ...tokensResp, vault: fullVault }) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await passkeyLogin({ transport: 'inline', walletStore: 'provisional' });
+
+    expect(result.vault).toEqual(fullVault);
+    expect(mockSetActiveHandle).not.toHaveBeenCalled();
+  });
+
   it('popup: persists the active handle from the popup vault result', async () => {
     mockPopup.mockResolvedValueOnce({ session: tokensResp, vault: fullVault });
 
@@ -218,6 +246,22 @@ describe('passkeyLogin — active-handle persistence', () => {
 
     await passkeyLogin({ transport: 'popup' });
 
+    expect(mockSetActiveHandle).not.toHaveBeenCalled();
+  });
+
+  it('popup provisional: requests provisional host behavior and does not commit on the caller', async () => {
+    mockPopup.mockResolvedValueOnce({ session: tokensResp, vault: fullVault });
+
+    const result = await passkeyLogin({
+      transport: 'popup',
+      walletStore: 'provisional',
+    });
+
+    expect(mockPopup).toHaveBeenCalledWith('signin', {
+      connectHost: undefined,
+      walletStore: 'provisional',
+    });
+    expect(result.vault).toEqual(fullVault);
     expect(mockSetActiveHandle).not.toHaveBeenCalled();
   });
 

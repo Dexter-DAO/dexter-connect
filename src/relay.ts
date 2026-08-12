@@ -1,11 +1,12 @@
 import type {
   DexterConnectConfig,
+  PasskeyLoginConfig,
   PasskeyLoginTokens,
   ConnectVault,
   SignInResult,
   CeremonyPhase,
 } from './types';
-import { ConnectError } from './types';
+import { ConnectError, resolveWalletStoreMode } from './types';
 import { startAuthentication, browserSupportsWebAuthn } from '@simplewebauthn/browser';
 import type {
   AuthenticationResponseJSON,
@@ -44,19 +45,22 @@ primeImmediateSupport();
  * Supabase session, so the Supabase-gated router would 401.
  */
 export async function passkeyLogin(
-  config: DexterConnectConfig = {},
+  config: PasskeyLoginConfig = {},
   onPhase?: (phase: CeremonyPhase) => void,
 ): Promise<SignInResult> {
   const apiBase = resolveDexterApiBase(config.apiBase);
+  const walletStore = resolveWalletStoreMode(config.walletStore);
   // Hosted-popup transport: on any non-Dexter origin, run the ceremony in a
   // popup on dexter.cash and get the same result back (works on any website).
   if (shouldUsePopup(config.transport)) {
     const result = await openCeremonyPopup<SignInResult>('signin', {
       connectHost: config.connectHost,
+      ...(walletStore === 'provisional' ? { walletStore } : {}),
     });
-    // Persist the active handle so the SDK wallet store reflects the sign-in
-    // (guarded: a session without a vault leaves nothing to record).
-    if (result.vault) {
+    // Commit mode preserves the historical active-wallet behavior. A
+    // provisional caller receives the same verified result with zero store
+    // writes on either origin, then explicitly commits after approval.
+    if (walletStore === 'commit' && result.vault) {
       setActiveHandle(result.vault.userHandle, result.vault.walletLabel ?? undefined, result.vault.credentialId);
     }
     return result;
@@ -77,9 +81,9 @@ export async function passkeyLogin(
   }
   onPhase?.('verifying');
   const result = await submitLogin(apiBase, response);
-  // Persist the active handle on a successful inline sign-in (guarded: no vault,
+  // Persist a successful inline sign-in only in commit mode (guarded: no vault,
   // nothing to record — same discipline as the popup path above).
-  if (result.vault) {
+  if (walletStore === 'commit' && result.vault) {
     setActiveHandle(result.vault.userHandle, result.vault.walletLabel ?? undefined, result.vault.credentialId);
   }
   return result;

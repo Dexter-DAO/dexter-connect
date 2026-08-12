@@ -101,6 +101,15 @@ describe('hosted popup result boundary', () => {
     expect(open).not.toHaveBeenCalled();
   });
 
+  it('rejects an adjacent wallet-store value before opening a window', () => {
+    const open = vi.spyOn(window, 'open');
+
+    expect(() =>
+      openCeremonyPopup('signin', { walletStore: 'provisionally' as never }),
+    ).toThrowError(expect.objectContaining({ code: 'invalid_wallet_store_mode' }));
+    expect(open).not.toHaveBeenCalled();
+  });
+
   it('rejects third-party account-claim proofs before opening a window', () => {
     const open = vi.spyOn(window, 'open');
     const operationMessage = new Uint8Array(42);
@@ -230,10 +239,57 @@ describe('hosted popup result boundary', () => {
     expect(harness.openedUrl.searchParams.get('origin')).toBe(window.location.origin);
     expect(harness.openedUrl.searchParams.get('op')).toBe('signin');
     expect(harness.openedUrl.searchParams.has('apiBase')).toBe(false);
+    expect(harness.openedUrl.searchParams.has('walletStore')).toBe(false);
 
     postHello(harness);
     postResult(harness, 'https://dexter.cash', harness.requestId);
     await expect(harness.pending).resolves.toEqual({ connected: true });
+  });
+
+  it('adds only the exact provisional wallet-store popup parameter', async () => {
+    const popup = { closed: false, close: vi.fn(), postMessage: vi.fn() };
+    vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window);
+    const pending = openCeremonyPopup<{ connected: true }>('signin', {
+      walletStore: 'provisional',
+    });
+    const openedUrl = new URL(vi.mocked(window.open).mock.calls[0]?.[0] as string);
+    const harness: PopupHarness = {
+      pending,
+      popup,
+      requestId: openedUrl.searchParams.get('requestId') ?? '',
+      openedUrl,
+      op: 'signin',
+    };
+
+    expect(openedUrl.searchParams.get('walletStore')).toBe('provisional');
+    expect([...openedUrl.searchParams.keys()].sort()).toEqual(
+      ['op', 'origin', 'requestId', 'v', 'walletStore'].sort(),
+    );
+
+    postHello(harness);
+    postResult(harness, 'https://dexter.cash', harness.requestId);
+    await expect(pending).resolves.toEqual({ connected: true });
+  });
+
+  it('omits the wallet-store parameter for explicit commit mode', async () => {
+    const popup = { closed: false, close: vi.fn(), postMessage: vi.fn() };
+    vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window);
+    const pending = openCeremonyPopup<{ connected: true }>('signin', {
+      walletStore: 'commit',
+    });
+    const openedUrl = new URL(vi.mocked(window.open).mock.calls[0]?.[0] as string);
+    const harness: PopupHarness = {
+      pending,
+      popup,
+      requestId: openedUrl.searchParams.get('requestId') ?? '',
+      openedUrl,
+      op: 'signin',
+    };
+
+    expect(openedUrl.searchParams.has('walletStore')).toBe(false);
+    postHello(harness);
+    postResult(harness, 'https://dexter.cash', harness.requestId);
+    await expect(pending).resolves.toEqual({ connected: true });
   });
 
   it('handshakes and accepts a result only from the exact popup, hosted origin, request, and op', async () => {

@@ -9,6 +9,8 @@ export type {
   ConnectVault,
   SignInResult,
   DexterConnectConfig,
+  PasskeyLoginConfig,
+  WalletStoreMode,
 } from './types';
 export { createAnonServerPolicy } from './anon-policy';
 export type { AnonServerPolicy, AnonChallengeResult } from './anon-policy';

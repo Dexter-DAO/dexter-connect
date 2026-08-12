@@ -2,6 +2,8 @@ import {
   ConnectError,
   type CeremonyOperation,
   type HostedSignRequestPayload,
+  type WalletStoreMode,
+  resolveWalletStoreMode,
 } from './types';
 import { resolveDexterConnectHost } from './trust';
 
@@ -79,6 +81,7 @@ export function openCeremonyPopup<T>(
     connectHost?: string;
     name?: string;
     preferImmediate?: boolean;
+    walletStore?: WalletStoreMode;
     signRequest?: HostedSignRequestPayload;
   } = {},
 ): Promise<T> {
@@ -91,10 +94,12 @@ export function openCeremonyPopup<T>(
   const openerOrigin = window.location.origin;
   const requestId = makeNonce();
   const signRequest = snapshotSignRequest(op, config.signRequest);
+  const walletStore = resolveWalletStoreMode(config.walletStore);
 
   const params = new URLSearchParams({ v: '1', op, requestId, origin: openerOrigin });
   if (config.name) params.set('name', config.name);
   if (config.preferImmediate) params.set('preferImmediate', '1');
+  if (walletStore === 'provisional') params.set('walletStore', 'provisional');
   const url = `${host}?${params.toString()}`;
 
   return new Promise<T>((resolve, reject) => {
