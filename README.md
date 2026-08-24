@@ -5,7 +5,7 @@
 <h1 align="center">@dexterai/connect</h1>
 
 <p align="center">
-  <strong>Sign in with Dexter. One passkey tap gives any website a non-custodial Dexter Wallet, and gives any server an offline-verifiable session.</strong>
+  <strong>Connect any app or agent to a Dexter Wallet. One passkey anchors the wallet, the owner session, and persistent agent authority across runtimes.</strong>
 </p>
 
 <p align="center">
@@ -18,18 +18,19 @@
 
 ## What this is
 
-A `<SignInWithDexter/>` button runs a discoverable passkey ceremony. The user
-taps their face, and your app gets back a session plus their **Dexter
-Wallet**: address, live USD balance, and the rails for an agent to spend from
-it under on-chain limits. The user holds their own keys; only their passkey
-moves funds, enforced on-chain. Composes
+A `<SignInWithDexter/>` button returns an application session and a
+**Dexter Wallet**. The same package creates and recovers wallets, signs exact
+wallet operations in a Dexter-hosted window, installs OpenDexter in agent
+runtimes, grants an agent persistent payment or trading authority, reports
+remaining capacity, and verifies sessions on the server. The owner keeps the
+root passkey. Agents receive narrower, revocable grants. Composes
 [`@dexterai/vault`](https://www.npmjs.com/package/@dexterai/vault).
 
 Four entry points cover the whole flow:
 
 | Entry point | Runs in | What it gives you |
 |---|---|---|
-| `@dexterai/connect` | browser | framework-free core: `passkeyLogin`, `createWallet`, `continueWithDexter`, the wallet store, agent-spend controls |
+| `@dexterai/connect` | browser | wallet lifecycle, hosted signing, persistent agent authority, capacity reads, wallet storage, runtime install actions |
 | `@dexterai/connect/react` | browser | `<SignInWithDexter/>`, the branded wallet kit, hooks |
 | `@dexterai/connect/server` | Node 18+, Workers, Vercel edge | `verifyDexterSession`: offline session verification |
 | `@dexterai/connect/worldid` | browser | `<VerifyPersonhood/>` World ID proof-of-personhood button |
@@ -182,14 +183,60 @@ the `useDexterWallet` + `useIdentity` hooks to drive them.
 
 ## Agent spend
 
-The control surface for letting an agent spend from the connected wallet:
+Connect can bind an OAuth or device-code connection to one persistent agent
+and one composable grant. The same grant can carry x402 payment rules and
+additional governed actions. It is staged by the owner, activated when the
+connection token is minted, and read later from the runtime bearer.
 
 ```ts
 import {
-  assembleAgentSpendStatus, // honest two-mode status read
-  enableAgentSpend,         // the on switch
-  revokeAgentSpend,         // the off switch
-  createPasskeySigner,      // @dexterai/vault guest signer for x402 / tab flows
+  beginAgentAuthority,
+  buildAgentAuthorityRequest,
+  buildX402PaymentRule,
+  noCustomX402Limits,
+  readAgentAuthority,
+  stageAgentAuthority,
+} from '@dexterai/connect';
+
+const limits = noCustomX402Limits();
+const request = buildAgentAuthorityRequest({
+  target: { kind: 'device-code', userCode },
+  expectedVaultPda: wallet.vaultPda,
+  agentLabel: 'Hermes',
+  grantExpiresAt: limits.expiresAt,
+  rules: [buildX402PaymentRule(limits)],
+});
+
+const challenge = await beginAgentAuthority({
+  ownerAccessToken,
+  operationId: crypto.randomUUID(),
+  request,
+});
+
+// Run startAuthentication({ optionsJSON: challenge.authorizationOptions })
+// from the owner's confirmation gesture, then stage the returned credential.
+await stageAgentAuthority({ ownerAccessToken, authorization: challenge, credential });
+
+const authority = await readAgentAuthority({ accessToken: openDexterToken });
+authority.grantId;
+authority.capacity?.remainingPerCallAmountAtomic;
+```
+
+`buildBoundedX402BootstrapRequest`, `beginBoundedX402Authority`, and
+`stageBoundedX402Authority` provide the x402-only path used by the hosted OAuth
+setup screen. `validateBoundedX402Draft` parses custom USDC limits without
+floating point. `noCustomX402Limits` records the owner's explicit choice not to
+add a custom ceiling.
+
+The older automatic agent-spend controls remain available while existing
+wallets migrate:
+
+```ts
+import {
+  assembleAgentSpendStatus,
+  enableAgentSpend,
+  revokeAgentSpend,
+  createPasskeySigner,
 } from '@dexterai/connect';
 ```
 
@@ -209,7 +256,7 @@ import { VerifyPersonhood } from '@dexterai/connect/worldid';
 
 ## Wallet-only sign-in (no account session)
 
-`recoverWallet` re-points a browser at an existing Dexter Wallet — the wallet
+`recoverWallet` re-points a browser at an existing Dexter Wallet. The wallet
 IS the sign-in; nothing else is minted. Use it when your surface treats the
 wallet as the identity (the dexter.cash header does exactly this):
 
@@ -218,12 +265,12 @@ import { recoverWallet } from '@dexterai/connect';
 
 const outcome = await recoverWallet({ preferImmediate: true }); // fire on TAP, never on mount
 if (outcome.ok) {
-  // outcome.vault.swigAddress, outcome.vault.walletLabel — the store + every
+  // outcome.vault.swigAddress and outcome.vault.walletLabel; the store and every
   // useIdentity/useDexterWallet surface is already updated.
 } else if (outcome.reason === 'no_credential') {
-  // this device has no wallet passkey → offer your create flow
+  // this device has no wallet passkey; offer your create flow
 } else if (outcome.reason === 'cancelled') {
-  // the user dismissed the sheet → stay silent
+  // the user dismissed the sheet; stay silent
 }
 ```
 
@@ -231,11 +278,11 @@ It returns a discriminated outcome instead of throwing: user cancel is a
 normal result in WebAuthn, not an exception. `preferImmediate` uses Chrome
 149+'s immediate UI mode to fast-fail instantly when the device holds no
 passkey (no empty account-picker sheet); everywhere else it falls back to the
-normal modal. Works from any website — off dexter.cash the ceremony runs in
+normal modal. It works from any website. Off dexter.cash, the ceremony runs in
 the hosted popup automatically.
 
 React: `<SignInWithDexter mode="recover" preferImmediate onRecovered={…} />`
-(after a successful recover the element renders null — show identity with
+(after a successful recover the element renders null; show identity with
 `DexterWalletChip` over `useIdentity`), or `useSignInWithDexter().recover()`.
 
 ## Wallet lifecycle
