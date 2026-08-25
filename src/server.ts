@@ -20,17 +20,19 @@ import {
   type JSONWebKeySet,
   type JWTPayload,
 } from 'jose';
+import { base64urlToBytes, bytesToBase64url } from './base64';
 
 export const DEFAULT_ISS = 'https://qdgumpoqnthrjfmqziwm.supabase.co/auth/v1';
 export const DEFAULT_AUDIENCE = 'authenticated';
 
 /** The namespaced claim sealed into the token by the access-token hook. */
 export interface DexterClaim {
-  ver: number;
+  ver: 1;
   /** Swig state address (base58) — the canonical Dexter Wallet identity. */
   vault: string;
   /** 16-byte passkey handle, base64url; absent on rows without one. */
   userHandle?: string;
+  origin?: string;
   agentGrant?: unknown;
 }
 
@@ -79,6 +81,78 @@ export interface DexterClient {
 }
 
 type GetKey = Parameters<typeof jwtVerify>[1];
+const INVALID_CLAIM = Symbol('invalid-claim');
+
+const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+const BASE58_INDEX = new Map([...BASE58_ALPHABET].map((char, index) => [char, index]));
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** Validate a canonical padless base64url-encoded 16-byte passkey handle. */
+function isUserHandle(value: unknown): value is string {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{22}$/.test(value)) return false;
+  try {
+    const bytes = base64urlToBytes(value);
+    return bytes.length === 16 && bytesToBase64url(bytes) === value;
+  } catch {
+    return false;
+  }
+}
+
+/** Validate that a base58 string canonically represents one 32-byte Solana address. */
+function isSolanaAddress(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length < 32 || value.length > 44) return false;
+
+  // Little-endian base-256 conversion. This stays dependency-free so the server
+  // entry remains usable in Node and edge runtimes without a Solana peer package.
+  const bytes = [0];
+  for (const char of value) {
+    const digit = BASE58_INDEX.get(char);
+    if (digit === undefined) return false;
+    let carry = digit;
+    for (let index = 0; index < bytes.length; index += 1) {
+      carry += bytes[index] * 58;
+      bytes[index] = carry & 0xff;
+      carry >>= 8;
+    }
+    while (carry > 0) {
+      bytes.push(carry & 0xff);
+      carry >>= 8;
+    }
+  }
+
+  // The initial zero accounts for one leading `1`; each additional leading
+  // `1` is another zero byte in the decoded address.
+  let leadingZeroes = 0;
+  while (leadingZeroes < value.length - 1 && value[leadingZeroes] === '1') {
+    bytes.push(0);
+    leadingZeroes += 1;
+  }
+  return bytes.length === 32;
+}
+
+function parseDexterClaim(value: unknown): DexterClaim | null | typeof INVALID_CLAIM {
+  // Pre-hook sessions deliberately have no Dexter claim yet.
+  if (value === undefined) return null;
+  if (!isRecord(value) || value.ver !== 1 || !isSolanaAddress(value.vault)) {
+    return INVALID_CLAIM;
+  }
+  if (value.userHandle !== undefined && !isUserHandle(value.userHandle)) {
+    return INVALID_CLAIM;
+  }
+  if (value.origin !== undefined && typeof value.origin !== 'string') {
+    return INVALID_CLAIM;
+  }
+  return {
+    ver: 1,
+    vault: value.vault,
+    ...(value.userHandle === undefined ? {} : { userHandle: value.userHandle }),
+    ...(value.origin === undefined ? {} : { origin: value.origin }),
+    ...(value.agentGrant === undefined ? {} : { agentGrant: value.agentGrant }),
+  };
+}
 
 function buildGetKey(opts: VerifyOptions): GetKey {
   if (opts.jwtKey) {
@@ -132,17 +206,32 @@ export function createDexterClient(options: VerifyOptions = {}): DexterClient {
         issuer: iss,
         audience,
         algorithms: ['ES256'], // pinned — defeats alg-confusion / alg:none
+        requiredClaims: ['sub', 'exp', 'iat'],
       });
-      const dexter = (payload as { dexter?: DexterClaim }).dexter;
+      if (typeof payload.sub !== 'string' || payload.sub.length === 0) {
+        return { isSignedIn: false, reason: 'invalid' };
+      }
+      const sessionId = (payload as { session_id?: unknown }).session_id;
+      const aal = (payload as { aal?: unknown }).aal;
+      if (
+        (sessionId !== undefined && sessionId !== null && typeof sessionId !== 'string') ||
+        (aal !== undefined && aal !== null && typeof aal !== 'string')
+      ) {
+        return { isSignedIn: false, reason: 'invalid' };
+      }
+      const dexter = parseDexterClaim((payload as { dexter?: unknown }).dexter);
+      if (dexter === INVALID_CLAIM) {
+        return { isSignedIn: false, reason: 'invalid' };
+      }
       return {
         isSignedIn: true,
-        sub: payload.sub ?? '',
+        sub: payload.sub,
         vaultAddress: dexter?.vault ?? null,
         userHandle: dexter?.userHandle ?? null,
         agentGrant: dexter?.agentGrant ?? null,
-        sessionId: (payload as { session_id?: string }).session_id ?? null,
-        aal: (payload as { aal?: string }).aal ?? null,
-        claims: payload,
+        sessionId: sessionId ?? null,
+        aal: aal ?? null,
+        claims: payload as JWTPayload & { dexter?: DexterClaim },
       };
     } catch (err) {
       return { isSignedIn: false, reason: failureReason(err) };
