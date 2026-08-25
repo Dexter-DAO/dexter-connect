@@ -6,6 +6,7 @@ import { fetchUsdcBalance } from './balance';
 import { createPasskeySigner } from './signer';
 import { ConnectError } from './types';
 import type {
+  AgentDelegationMode,
   ConnectVault,
   PasskeyLoginTokens,
   SignInResult,
@@ -33,6 +34,12 @@ export interface UseSignInWithDexterConfig {
   /** Chrome-149+ immediate UI mode for the wallet-only verb: instant fast-fail
    *  when this device holds no passkey. Ignored by signIn(). */
   preferImmediate?: boolean;
+  /**
+   * Continue-mode wallet birth behavior. `deferred` creates an owner-only
+   * wallet without asking for agent spending authority. Existing-wallet
+   * sign-in is unchanged.
+   */
+  agentDelegation?: AgentDelegationMode;
 }
 
 export interface UseSignInWithDexter {
@@ -84,7 +91,14 @@ export interface UseSignInWithDexter {
 export function useSignInWithDexter(
   config: UseSignInWithDexterConfig = {},
 ): UseSignInWithDexter {
-  const { apiBase, rpcUrl = DEFAULT_RPC, transport, connectHost, preferImmediate } = config;
+  const {
+    apiBase,
+    rpcUrl = DEFAULT_RPC,
+    transport,
+    connectHost,
+    preferImmediate,
+    agentDelegation,
+  } = config;
   const [status, setStatus] = useState<ConnectStatus>('idle');
   const [phase, setPhase] = useState<CeremonyPhase | null>(null);
   const [session, setSession] = useState<PasskeyLoginTokens | null>(null);
@@ -163,6 +177,7 @@ export function useSignInWithDexter(
           ...(apiBase ? { apiBase } : {}),
           ...(transport ? { transport } : {}),
           ...(connectHost ? { connectHost } : {}),
+          ...(agentDelegation ? { agentDelegation } : {}),
         },
         setPhase,
       );
@@ -188,7 +203,7 @@ export function useSignInWithDexter(
       setPhase(null);
       throw e;
     }
-  }, [apiBase, transport, connectHost]);
+  }, [apiBase, transport, connectHost, agentDelegation]);
 
   const disconnect = useCallback(() => {
     setSession(null);

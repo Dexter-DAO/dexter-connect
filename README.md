@@ -128,6 +128,34 @@ and returns the full `CreateWalletResult`; explicitly call
 only after the separate approval succeeds. The only supported modes are exact
 `commit` and `provisional`; omitted means `commit`.
 
+## Create an owner-only wallet
+
+An app can postpone agent authority and create the wallet with its owner
+passkey only:
+
+```ts
+import { continueWithDexter } from '@dexterai/connect';
+
+const result = await continueWithDexter({
+  agentDelegation: 'deferred',
+});
+```
+
+The hosted Dexter window omits the agent-allowance step. The initialize request
+contains no spend limit or agent-session TTL. Existing wallets still sign in
+normally, and the owner can add governed agent authority later.
+
+`agentDelegation: 'deferred'` and `spendPolicy` are mutually exclusive. The SDK
+rejects that combination before opening a popup, fetching a challenge, or
+starting WebAuthn. Omitting `agentDelegation` preserves the existing
+`configure-now` flow.
+
+A `kind: 'signin'` continue result includes the verified session. A
+`kind: 'create'` result proves that wallet creation completed but does not mint
+an access session. If your server must bind the new identity immediately, ask
+the user to finish `passkeyLogin()` on a subsequent user action and send only
+that access token to your server for verification.
+
 ## Verify the session on your server
 
 ```ts
@@ -138,8 +166,10 @@ const dexter = createDexterClient(); // parameterized on (iss, jwksUrl); default
 export async function handler(req: Request) {
   const auth = await dexter.authenticateRequest(req);
   if (!auth.isSignedIn) return new Response('unauthorized', { status: 401 });
-  auth.sub;          // stable user id
-  auth.vaultAddress; // the Dexter Wallet address, from the signed dexter claim
+  if (!auth.userHandle) return new Response('wallet identity required', { status: 403 });
+  auth.userHandle;   // stable Dexter wallet principal from the signed claim
+  auth.vaultAddress; // associated wallet capability, not your user primary key
+  auth.sub;          // signed account subject backing this session
   auth.claims;       // full verified JWT payload
 }
 ```

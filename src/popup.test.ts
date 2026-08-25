@@ -110,6 +110,25 @@ describe('hosted popup result boundary', () => {
     expect(open).not.toHaveBeenCalled();
   });
 
+  it('carries explicit deferred agent setup only on a create ceremony', () => {
+    const popup = { closed: false, close: vi.fn(), postMessage: vi.fn() };
+    vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window);
+
+    void openCeremonyPopup('create', { agentDelegation: 'deferred' });
+
+    const openedUrl = new URL(vi.mocked(window.open).mock.calls[0]?.[0] as string);
+    expect(openedUrl.searchParams.get('agentDelegation')).toBe('deferred');
+  });
+
+  it('rejects deferred agent setup on an unrelated ceremony before opening a window', () => {
+    const open = vi.spyOn(window, 'open');
+
+    expect(() =>
+      openCeremonyPopup('signin', { agentDelegation: 'deferred' }),
+    ).toThrowError(expect.objectContaining({ code: 'unexpected_agent_delegation' }));
+    expect(open).not.toHaveBeenCalled();
+  });
+
   it('rejects third-party account-claim proofs before opening a window', () => {
     const open = vi.spyOn(window, 'open');
     const operationMessage = new Uint8Array(42);

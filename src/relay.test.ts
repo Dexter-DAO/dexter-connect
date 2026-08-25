@@ -299,6 +299,27 @@ describe('continueWithDexter — popup persistence', () => {
     expect(mockSetActiveHandle).toHaveBeenCalledWith('new-handle', 'My Wallet', 'new-cred');
   });
 
+  it('popup owner-only continue carries explicit deferred agent setup', async () => {
+    mockPopup.mockResolvedValueOnce({
+      kind: 'create',
+      handle: 'new-handle',
+      credentialId: 'new-cred',
+      vault: { ...fullVault, userHandle: 'new-handle', credentialId: 'new-cred' },
+    });
+
+    await continueWithDexter({
+      transport: 'popup',
+      name: 'Cattle Rider',
+      agentDelegation: 'deferred',
+    });
+
+    expect(mockPopup).toHaveBeenCalledWith('continue', {
+      connectHost: undefined,
+      name: 'Cattle Rider',
+      agentDelegation: 'deferred',
+    });
+  });
+
   it.each([
     [
       'create',
@@ -390,6 +411,24 @@ describe('continueWithDexter — popup persistence', () => {
     expect(mockGetHandle).not.toHaveBeenCalled();
     expect(mockSetActiveHandle).not.toHaveBeenCalled();
   });
+
+  it('rejects conflicting deferred agent setup before popup, fetch, WebAuthn, or wallet reads', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      continueWithDexter({
+        transport: 'popup',
+        agentDelegation: 'deferred',
+        spendPolicy: { spendLimitAtomic: '5000000', sessionTtlSeconds: '2592000' },
+      }),
+    ).rejects.toMatchObject({ code: 'conflicting_agent_delegation' });
+    expect(mockPopup).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mockStartAuth).not.toHaveBeenCalled();
+    expect(mockImmSupported).not.toHaveBeenCalled();
+    expect(mockGetHandle).not.toHaveBeenCalled();
+  });
 });
 
 // ── continueWithDexter inline — the keychain-first decision rule ─────────────
@@ -475,6 +514,30 @@ describe('continueWithDexter — keychain-first inline decisions', () => {
 
     expect(result.kind).toBe('needs_create');
     expect(mockCreate).not.toHaveBeenCalled();
+  });
+
+  it('immediate fast-fail with deferred agent setup → creates owner-only', async () => {
+    mockImmSupported.mockResolvedValue(true);
+    mockImmAuth.mockRejectedValue(new DOMException('no credential', 'NotAllowedError'));
+    mockClassify.mockReturnValue(true);
+    mockCreate.mockResolvedValue({
+      handle: 'new-h',
+      credentialId: 'new-c',
+      vault: { ...fullVault, walletLabel: 'Cattle Rider' },
+      label: 'Cattle Rider',
+    });
+    const fetchMock = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => challengeResp });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const config = {
+      transport: 'inline' as const,
+      name: 'Cattle Rider',
+      agentDelegation: 'deferred' as const,
+    };
+    const result = await continueWithDexter(config);
+
+    expect(result.kind).toBe('create');
+    expect(mockCreate).toHaveBeenCalledWith({ ...config, onPhase: undefined });
   });
 
   it('immediate fast-fail WITH an authored spendPolicy → auto-create', async () => {

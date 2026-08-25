@@ -7,7 +7,11 @@ import type {
   CeremonyPhase,
   WalletStoreMode,
 } from './types';
-import { ConnectError, resolveWalletStoreMode } from './types';
+import {
+  ConnectError,
+  resolveAgentDelegationMode,
+  resolveWalletStoreMode,
+} from './types';
 import { startAuthentication, browserSupportsWebAuthn } from '@simplewebauthn/browser';
 import type {
   AuthenticationResponseJSON,
@@ -107,15 +111,16 @@ export async function passkeyLogin(
 //      Return needs_choice: the caller renders an explicit sign-in / create
 //      fork. The verb never guess-creates.
 //
-// Consent-at-birth: the create leg runs ONLY when the caller already authored
-// a spendPolicy (fail-closed, same rule as the hosted page). Without one the
+// Agent setup at birth: the historical create leg runs only when the caller
+// already authored a spendPolicy. An explicit agentDelegation:'deferred' instead
+// creates owner-only without inventing an allowance. With neither choice, the
 // verb returns needs_create and the caller collects name + allowance first.
 export type ContinueResult =
   | ({ kind: 'signin' } & SignInResult)
   | ({ kind: 'create' } & CreateWalletResult)
   /** This device has no passkey (proven by an immediate fast-fail) but the
-   *  caller supplied no authored spendPolicy — collect name + allowance,
-   *  then call createWallet. */
+   *  caller supplied neither an authored spendPolicy nor explicit deferred
+   *  agent setup — collect name + allowance, then call createWallet. */
   | { kind: 'needs_create' }
   /** Cannot silently probe (no immediate support, no local handle): render an
    *  explicit "Sign in" / "I'm new" choice. Never guess. */
@@ -130,7 +135,14 @@ export async function continueWithDexter(
   // Validate before either opening the trusted popup, fetching, reading the
   // wallet store, or touching WebAuthn.
   const walletStore = resolveWalletStoreMode(config.walletStore);
+  const agentDelegation = resolveAgentDelegationMode(config.agentDelegation);
   resolveDexterApiBase(config.apiBase);
+  if (agentDelegation === 'deferred' && config.spendPolicy) {
+    throw new ConnectError(
+      'conflicting_agent_delegation',
+      'agentDelegation deferred cannot include a spendPolicy',
+    );
+  }
   // Off-origin: the popup on dexter.cash decides (it alone can see the
   // dexter.cash keychain/handle); only terminal outcomes ride back.
   if (shouldUsePopup(config.transport)) {
@@ -138,6 +150,7 @@ export async function continueWithDexter(
       connectHost: config.connectHost,
       name: config.name,
       ...(walletStore === 'provisional' ? { walletStore } : {}),
+      ...(agentDelegation === 'deferred' ? { agentDelegation } : {}),
     });
     // Commit mode mirrors whichever terminal identity the popup resolved. In
     // provisional mode neither the hosted nor caller origin may change its
@@ -158,8 +171,11 @@ export async function continueWithDexter(
     const probe = await immediatePasskeyLogin(config, onPhase, walletStore);
     if (probe.outcome === 'signin') return { kind: 'signin', ...probe.result };
     if (probe.outcome === 'cancelled') return { kind: 'cancelled' };
-    // outcome === 'no_credential' — proven empty device; create needs consent.
-    if (!config.spendPolicy) return { kind: 'needs_create' };
+    // outcome === 'no_credential' — proven empty device; create needs either
+    // authored agent authority or an explicit owner-only choice.
+    if (!config.spendPolicy && agentDelegation !== 'deferred') {
+      return { kind: 'needs_create' };
+    }
     const created = await createWallet({ ...config, onPhase });
     return { kind: 'create', ...created };
   }

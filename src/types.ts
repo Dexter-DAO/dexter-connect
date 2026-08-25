@@ -60,6 +60,16 @@ export type CeremonyPhase = 'challenge' | 'passkey' | 'verifying' | 'finalizing'
  */
 export type WalletStoreMode = 'commit' | 'provisional';
 
+/**
+ * Controls whether wallet creation also asks the owner to configure an agent
+ * spending allowance.
+ *
+ * `configure-now` preserves the historical consent-at-birth flow. `deferred`
+ * creates an owner-only wallet and leaves agent authority unconfigured until
+ * the owner explicitly adds it later.
+ */
+export type AgentDelegationMode = 'configure-now' | 'deferred';
+
 /** Exact action the hosted Dexter consent window is being asked to perform. */
 export type CeremonyOperation = 'signin' | 'create' | 'continue' | 'recover' | 'sign';
 
@@ -166,6 +176,16 @@ export function resolveWalletStoreMode(mode: unknown): WalletStoreMode {
   throw new ConnectError(
     'invalid_wallet_store_mode',
     'walletStore must be exactly commit or provisional',
+  );
+}
+
+/** Runtime guard for JavaScript callers and hosted-popup query parsing. */
+export function resolveAgentDelegationMode(mode: unknown): AgentDelegationMode {
+  if (mode === undefined || mode === 'configure-now') return 'configure-now';
+  if (mode === 'deferred') return 'deferred';
+  throw new ConnectError(
+    'invalid_agent_delegation_mode',
+    'agentDelegation must be exactly configure-now or deferred',
   );
 }
 

@@ -93,6 +93,33 @@ describe('createWallet — spendPolicy on the /initialize body', () => {
     expect(body).not.toHaveProperty('sessionTtlSeconds');
   });
 
+  it('creates an explicit deferred wallet owner-only with no spend policy fields', async () => {
+    const fetchMock = mockCeremonyFetch();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await createWallet({ transport: 'inline', agentDelegation: 'deferred' });
+
+    const body = initBody(fetchMock);
+    expect(body.userHandle).toBe('handle-xyz');
+    expect(body).not.toHaveProperty('spendLimitAtomic');
+    expect(body).not.toHaveProperty('sessionTtlSeconds');
+  });
+
+  it('rejects a deferred wallet carrying a spend policy before any ceremony side effect', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      createWallet({
+        transport: 'inline',
+        agentDelegation: 'deferred',
+        spendPolicy: authoredPolicy('20')!,
+      }),
+    ).rejects.toMatchObject({ code: 'conflicting_agent_delegation' });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mockStartReg).not.toHaveBeenCalled();
+  });
+
   it('carries the authored allowance + fixed TTL when a spendPolicy is present', async () => {
     const fetchMock = mockCeremonyFetch();
     vi.stubGlobal('fetch', fetchMock);
@@ -247,6 +274,22 @@ describe('createWallet — popup persistence', () => {
     expect(out).toEqual(popupResult);
   });
 
+  it('requests the explicit deferred agent flow from the hosted ceremony', async () => {
+    mockPopup.mockResolvedValueOnce(popupResult);
+
+    await createWallet({
+      transport: 'popup',
+      name: 'Cattle Rider',
+      agentDelegation: 'deferred',
+    });
+
+    expect(mockPopup).toHaveBeenCalledWith('create', {
+      connectHost: undefined,
+      name: 'Cattle Rider',
+      agentDelegation: 'deferred',
+    });
+  });
+
   it('does NOT persist when the ceremony is rejected', async () => {
     mockPopup.mockRejectedValueOnce(new ConnectError('popup_closed'));
 
@@ -282,6 +325,21 @@ describe('createWallet — popup persistence', () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(mockStartReg).not.toHaveBeenCalled();
     expect(mockSetActiveHandle).not.toHaveBeenCalled();
+  });
+
+  it('rejects an adjacent agent-delegation mode before popup, fetch, or WebAuthn', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      createWallet({
+        transport: 'popup',
+        agentDelegation: 'later' as never,
+      }),
+    ).rejects.toMatchObject({ code: 'invalid_agent_delegation_mode' });
+    expect(mockPopup).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mockStartReg).not.toHaveBeenCalled();
   });
 });
 

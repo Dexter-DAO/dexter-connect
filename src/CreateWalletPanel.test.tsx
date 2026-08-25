@@ -62,6 +62,15 @@ describe('CreateWalletPanel — gating (the money perimeter)', () => {
     await click(radio(container, '$20'));
     expect(cta(container).disabled).toBe(false);
   });
+
+  it('owner-only mode needs no allowance and enables creation immediately', async () => {
+    const { container } = await render(
+      <CreateWalletPanel transport="inline" agentDelegation="deferred" />,
+    );
+    expect(container.querySelector('.dx-allow')).toBeNull();
+    expect(container.textContent).toContain('No agent can spend from this wallet.');
+    expect(cta(container).disabled).toBe(false);
+  });
 });
 
 describe('CreateWalletPanel — composition', () => {
@@ -119,6 +128,23 @@ describe('CreateWalletPanel — ceremony flow', () => {
     expect(createWallet.mock.calls[0][0].name).toBe('Dexter Wallet');
   });
 
+  it('creates owner-only without inventing a spend policy', async () => {
+    createWallet.mockResolvedValue(OK);
+    const { container } = await render(
+      <CreateWalletPanel transport="inline" agentDelegation="deferred" />,
+    );
+
+    await click(cta(container));
+    await flush();
+
+    expect(createWallet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentDelegation: 'deferred',
+        spendPolicy: undefined,
+      }),
+    );
+  });
+
   it('surfaces a ConnectError inline + via onError, then offers Retry (state preserved)', async () => {
     createWallet.mockRejectedValue(new ConnectError('initialize_failed', 'boom'));
     const onError = vi.fn();
@@ -173,6 +199,22 @@ describe('CreateWalletPanel — ceremony flow', () => {
         name: undefined,
         spendPolicy: undefined,
       }),
+    );
+  });
+
+  it('tells the hosted window to defer agent authority without allowance copy', async () => {
+    createWallet.mockResolvedValue(OK);
+    const { container } = await render(
+      <CreateWalletPanel transport="popup" agentDelegation="deferred" />,
+    );
+
+    expect(container.textContent).toContain('Choose the wallet name there');
+    expect(container.textContent).not.toContain('agent allowance there');
+    await click(cta(container));
+    await flush();
+
+    expect(createWallet).toHaveBeenCalledWith(
+      expect.objectContaining({ agentDelegation: 'deferred' }),
     );
   });
 });

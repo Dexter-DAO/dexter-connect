@@ -11,6 +11,7 @@ export type {
   DexterConnectConfig,
   PasskeyLoginConfig,
   WalletStoreMode,
+  AgentDelegationMode,
 } from './types';
 export { createAnonServerPolicy } from './anon-policy';
 export type { AnonServerPolicy, AnonChallengeResult } from './anon-policy';

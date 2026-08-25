@@ -1,6 +1,6 @@
 {
   "name": "@dexterai/connect",
-  "version": "0.27.0",
+  "version": "0.28.0",
   "description": "Connect apps and agents to a self-custodial Dexter Wallet with passkey identity, governed authority, hosted signing, and verifiable sessions.",
   "type": "module",
   "exports": {

@@ -24,8 +24,13 @@ import type {
   DexterConnectConfig,
   CeremonyPhase,
   WalletStoreMode,
+  AgentDelegationMode,
 } from './types';
-import { ConnectError, resolveWalletStoreMode } from './types';
+import {
+  ConnectError,
+  resolveAgentDelegationMode,
+  resolveWalletStoreMode,
+} from './types';
 import { startRegistration } from '@simplewebauthn/browser';
 import type {
   RegistrationResponseJSON,
@@ -59,6 +64,14 @@ export interface CreateWalletConfig extends DexterConnectConfig {
    *  carries, the wire always sends SESSION_TTL_30D. Absent → no policy authored
    *  (the vault initializes without one; nothing invents a default). */
   spendPolicy?: SpendPolicy;
+  /**
+   * When agent authority is configured. Defaults to `configure-now`, which
+   * preserves the existing hosted allowance flow. `deferred` creates an
+   * owner-only wallet without an allowance prompt; the owner can add governed
+   * agent authority later. A deferred creation must not also carry a
+   * `spendPolicy`.
+   */
+  agentDelegation?: AgentDelegationMode;
   /** Called as the ceremony progresses, for live "connecting steps" UI:
    *  challenge → passkey → verifying → finalizing. */
   onPhase?: (phase: CeremonyPhase) => void;
@@ -91,8 +104,15 @@ export async function createWallet(
   // Validate before popup, fetch, or WebAuthn. Only the exact public modes are
   // accepted; adjacent strings may not start a wallet-creation ceremony.
   const walletStore = resolveWalletStoreMode(config.walletStore);
+  const agentDelegation = resolveAgentDelegationMode(config.agentDelegation);
   const apiBase = resolveDexterApiBase(config.apiBase);
   resolveDexterRpId(config.rpId);
+  if (agentDelegation === 'deferred' && config.spendPolicy) {
+    throw new ConnectError(
+      'conflicting_agent_delegation',
+      'agentDelegation deferred cannot include a spendPolicy',
+    );
+  }
   // Hosted-popup transport: on any non-Dexter origin, run the create ceremony in
   // a popup on dexter.cash and get the wallet back (works on any website).
   if (shouldUsePopup(config.transport)) {
@@ -100,6 +120,7 @@ export async function createWallet(
       connectHost: config.connectHost,
       name: config.name,
       ...(walletStore === 'provisional' ? { walletStore } : {}),
+      ...(agentDelegation === 'deferred' ? { agentDelegation } : {}),
     });
     // In commit mode the ceremony ran on dexter.cash (its localStorage), so
     // mirror the returned wallet on THIS caller's origin. In provisional mode
