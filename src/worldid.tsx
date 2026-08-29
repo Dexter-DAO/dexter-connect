@@ -1,8 +1,6 @@
 // @dexterai/connect/worldid — the shared World ID "verify personhood" surface.
 //
-// Promotes the internal capture rig's proven IDKitRequestWidget flow into ONE
-// shared, config-driven React component every consumer imports — the personhood
-// sibling of <SignInWithDexter> (Rule #7: shared surface, never hand-rolled).
+// Shared, config-driven World ID control for Dexter integrations.
 //
 // Its ONLY job is proof ACQUISITION: it hands back the raw IDKitResult (the v4
 // Orb OPRFNullifier proof + public signals). What to DO with the proof —
@@ -153,10 +151,8 @@ export interface VerifyPersonhoodProps extends VerifyPersonhoodConfig {
 }
 
 /**
- * Turnkey "Verify your personhood" element — the personhood sibling of
- * <SignInWithDexter>. Renders the branded DexterButton (loading while the RP
- * context signs server-side) that opens World App; on success hands the raw
- * IDKitResult to `onProof`. Brand voice: no emojis. Themeable via --dx-* vars.
+ * Turnkey "Verify your personhood" element. It renders DexterButton while the
+ * RP context is prepared, opens World App, and returns IDKitResult to `onProof`.
  */
 export function VerifyPersonhood(props: VerifyPersonhoodProps): ReactElement {
   const {

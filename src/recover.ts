@@ -19,10 +19,16 @@ import type {
   PublicKeyCredentialRequestOptionsJSON,
 } from '@simplewebauthn/browser';
 
-import type { RecoverOutcome, RecoverVault, RecoverWalletConfig, WalletStoreMode } from './types';
-import { ConnectError, resolveWalletStoreMode } from './types';
+import type {
+  RecoverOutcome,
+  RecoverVault,
+  RecoverWalletConfig,
+  WalletIdentityProof,
+  WalletStoreMode,
+} from './types';
+import { ConnectError, parseWalletIdentityProof, resolveWalletStoreMode } from './types';
 import { shouldUsePopup, openCeremonyPopup } from './popup';
-import { setActiveHandle } from './walletStore';
+import { activateRecoveredVault } from './walletActivation';
 import { readErrorCode } from './httpError';
 import {
   classifyWebAuthnRejection,
@@ -80,8 +86,25 @@ export async function recoverWallet(config: RecoverWalletConfig = {}): Promise<R
     // In commit mode the receiver's inline run wrote dexter.cash localStorage,
     // so mirror it on the CALLER's origin (same discipline as enroll). In
     // provisional mode neither origin may change its active handle/roster.
-    if (walletStore === 'commit' && outcome.ok) {
-      setActiveHandle(outcome.userHandle, outcome.vault.walletLabel ?? undefined, outcome.credentialId);
+    if (outcome.ok) {
+      try {
+        outcome = {
+          ...outcome,
+          walletIdentityProof: parseWalletIdentityProof(
+            outcome.walletIdentityProof,
+          ),
+        };
+      } catch (err) {
+        return netError('wallet_identity_proof_malformed', err);
+      }
+      if (walletStore === 'commit') {
+        activateRecoveredVault(
+          outcome.userHandle,
+          outcome.credentialId,
+          outcome.vault,
+          outcome.walletIdentityProof,
+        );
+      }
     }
     return outcome;
   }
@@ -146,6 +169,7 @@ export async function recoverWallet(config: RecoverWalletConfig = {}): Promise<R
   onPhase?.('verifying');
   let userHandle: string;
   let credentialId: string;
+  let walletIdentityProof: WalletIdentityProof;
   try {
     const res = await fetch(`${apiBase}${ANON_SIGN_BASE}/recover-verify`, {
       method: 'POST',
@@ -155,9 +179,14 @@ export async function recoverWallet(config: RecoverWalletConfig = {}): Promise<R
     // 404 = the passkey exists locally but maps to no server row — offer create.
     if (res.status === 404) return { ok: false, reason: 'no_credential' };
     if (!res.ok) return { ok: false, reason: 'error', error: new ConnectError(await readErrorCode(res)) };
-    const data = (await res.json()) as { credentialId: string; userHandle: string };
+    const data = (await res.json()) as {
+      credentialId: string;
+      userHandle: string;
+      walletIdentityProof?: unknown;
+    };
     userHandle = data.userHandle;
     credentialId = data.credentialId;
+    walletIdentityProof = parseWalletIdentityProof(data.walletIdentityProof);
   } catch (err) {
     return netError('recover_verify_failed', err);
   }
@@ -203,9 +232,14 @@ export async function recoverWallet(config: RecoverWalletConfig = {}): Promise<R
   // label + credentialId into the roster (eject's Signal-API prune wants the
   // credentialId). Provisional callers explicitly commit after approval.
   if (walletStore === 'commit') {
-    setActiveHandle(userHandle, vault.walletLabel ?? undefined, credentialId);
+    activateRecoveredVault(
+      userHandle,
+      credentialId,
+      vault,
+      walletIdentityProof,
+    );
   }
-  return { ok: true, userHandle, credentialId, vault };
+  return { ok: true, userHandle, credentialId, vault, walletIdentityProof };
 }
 
 function netError(code: string, err: unknown): RecoverOutcome {

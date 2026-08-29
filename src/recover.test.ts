@@ -14,7 +14,14 @@ vi.mock('./popup', () => ({
 }));
 
 vi.mock('./walletStore', () => ({
-  setActiveHandle: vi.fn(),
+  setActiveWallet: vi.fn(() => true),
+}));
+
+vi.mock('./walletProofSession', () => ({
+  walletProofSessionStore: {
+    save: vi.fn(() => ({ kind: 'dexter_wallet_proof_session' })),
+    clear: vi.fn(() => true),
+  },
 }));
 
 // Keep the REAL rejection classifier; mock only the capability probe + bridge.
@@ -31,13 +38,13 @@ vi.mock('./immediate', async (importOriginal) => {
 import { recoverWallet } from './recover';
 import { startAuthentication } from '@simplewebauthn/browser';
 import { openCeremonyPopup } from './popup';
-import { setActiveHandle } from './walletStore';
+import { setActiveWallet } from './walletStore';
 import { immediateGetSupported, immediateAuthentication } from './immediate';
 import { ConnectError } from './types';
 
 const mockStartAuth = vi.mocked(startAuthentication);
 const mockPopup = vi.mocked(openCeremonyPopup);
-const mockSetActiveHandle = vi.mocked(setActiveHandle);
+const mockSetActiveWallet = vi.mocked(setActiveWallet);
 const mockImmediateSupported = vi.mocked(immediateGetSupported);
 const mockImmediateAuth = vi.mocked(immediateAuthentication);
 
@@ -53,7 +60,18 @@ const assertionResp = {
   type: 'public-key' as const,
 };
 
-const verifyResp = { verified: true, credentialId: 'cred-abc', userHandle: 'handle-xyz' };
+const walletIdentityProof = {
+  token: 'wallet-proof',
+  tokenType: 'Bearer' as const,
+  expiresAt: 2_000_000_000,
+  expiresIn: 2_592_000,
+};
+const verifyResp = {
+  verified: true,
+  credentialId: 'cred-abc',
+  userHandle: 'handle-xyz',
+  walletIdentityProof,
+};
 
 const statusResp = {
   enrolled: true,
@@ -106,6 +124,7 @@ describe('recoverWallet — inline leg', () => {
         isActivated: true,
         walletLabel: 'BranchWallet',
       },
+      walletIdentityProof,
     });
     const urls = fetchMock.mock.calls.map((c) => String(c[0]));
     expect(urls[0]).toContain('/api/passkey-anon/sign/recover-challenge');
@@ -115,7 +134,14 @@ describe('recoverWallet — inline leg', () => {
       credential: assertionResp,
     });
     // Persistence carries label + credentialId (richer than the fe donor, which dropped both).
-    expect(mockSetActiveHandle).toHaveBeenCalledWith('handle-xyz', 'BranchWallet', 'cred-abc');
+    expect(mockSetActiveWallet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        handle: 'handle-xyz',
+        label: 'BranchWallet',
+        credentialId: 'cred-abc',
+        vaultPda: 'vpda',
+      }),
+    );
     expect(phases).toEqual(['challenge', 'passkey', 'verifying']);
   });
 
@@ -126,7 +152,7 @@ describe('recoverWallet — inline leg', () => {
 
     expect(out.ok).toBe(true);
     if (out.ok) expect(out.vault.vaultPda).toBe('vpda');
-    expect(mockSetActiveHandle).not.toHaveBeenCalled();
+    expect(mockSetActiveWallet).not.toHaveBeenCalled();
   });
 
   it('rejects an adjacent wallet-store mode before fetch, WebAuthn, or popup', async () => {
@@ -143,7 +169,7 @@ describe('recoverWallet — inline leg', () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(mockStartAuth).not.toHaveBeenCalled();
     expect(mockPopup).not.toHaveBeenCalled();
-    expect(mockSetActiveHandle).not.toHaveBeenCalled();
+    expect(mockSetActiveWallet).not.toHaveBeenCalled();
   });
 
   it('verify 404 (passkey with no server row) → no_credential, nothing persisted', async () => {
@@ -154,7 +180,7 @@ describe('recoverWallet — inline leg', () => {
 
     const out = await recoverWallet({ transport: 'inline' });
     expect(out).toEqual({ ok: false, reason: 'no_credential' });
-    expect(mockSetActiveHandle).not.toHaveBeenCalled();
+    expect(mockSetActiveWallet).not.toHaveBeenCalled();
     expect(fetchMock).toHaveBeenCalledTimes(2); // no status fetch after a failed verify
   });
 
@@ -164,7 +190,7 @@ describe('recoverWallet — inline leg', () => {
 
     const out = await recoverWallet({ transport: 'inline' });
     expect(out).toEqual({ ok: false, reason: 'cancelled' });
-    expect(mockSetActiveHandle).not.toHaveBeenCalled();
+    expect(mockSetActiveWallet).not.toHaveBeenCalled();
   });
 
   it('immediate mode: uses the bridge; instant rejection → no_credential (no wallet on this device)', async () => {
@@ -200,7 +226,7 @@ describe('recoverWallet — inline leg', () => {
       expect(out.reason).toBe('error');
       expect(out.error?.code).toBe('vault_not_found');
     }
-    expect(mockSetActiveHandle).not.toHaveBeenCalled();
+    expect(mockSetActiveWallet).not.toHaveBeenCalled();
   });
 
   it('challenge failure surfaces the server code as an error outcome', async () => {
@@ -239,6 +265,7 @@ describe('recoverWallet — popup leg', () => {
       isActivated: true,
       walletLabel: 'BranchWallet',
     },
+    walletIdentityProof,
   };
 
   it("sends op='recover' with preferImmediate, relays the outcome, re-persists on the consumer origin", async () => {
@@ -256,14 +283,20 @@ describe('recoverWallet — popup leg', () => {
     });
     // The receiver's inline run wrote dexter.cash localStorage only — the SDK
     // must re-persist on the CALLER's origin (enroll.ts popup precedent).
-    expect(mockSetActiveHandle).toHaveBeenCalledWith('handle-xyz', 'BranchWallet', 'cred-abc');
+    expect(mockSetActiveWallet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        handle: 'handle-xyz',
+        label: 'BranchWallet',
+        credentialId: 'cred-abc',
+      }),
+    );
   });
 
   it('relays a not-ok outcome verbatim without persisting', async () => {
     mockPopup.mockResolvedValue({ ok: false, reason: 'no_credential' });
     const out = await recoverWallet({ transport: 'popup' });
     expect(out).toEqual({ ok: false, reason: 'no_credential' });
-    expect(mockSetActiveHandle).not.toHaveBeenCalled();
+    expect(mockSetActiveWallet).not.toHaveBeenCalled();
   });
 
   it('popup provisional: requests provisional host behavior and does not commit on the caller', async () => {
@@ -281,7 +314,7 @@ describe('recoverWallet — popup leg', () => {
       preferImmediate: true,
       walletStore: 'provisional',
     });
-    expect(mockSetActiveHandle).not.toHaveBeenCalled();
+    expect(mockSetActiveWallet).not.toHaveBeenCalled();
   });
 
   it('popup_closed (user shut the window) → cancelled', async () => {

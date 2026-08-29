@@ -27,6 +27,12 @@ function radio(container: HTMLElement, label: string): HTMLElement {
 const OK: CreateWalletResult = {
   handle: 'h',
   credentialId: 'c',
+  walletIdentityProof: {
+    token: 'wallet-proof',
+    tokenType: 'Bearer',
+    expiresAt: 2_000_000_000,
+    expiresIn: 2_592_000,
+  },
   label: 'Dexter Wallet',
   vault: {
     vaultPda: 'v',
@@ -43,38 +49,62 @@ beforeEach(() => {
   createWallet.mockReset();
 });
 
-describe('CreateWalletPanel — gating (the money perimeter)', () => {
-  it('CTA is disabled until an allowance is authored (none selected initially)', async () => {
+describe('CreateWalletPanel — creation choices', () => {
+  it('creates the owner Wallet by default without an allowance choice', async () => {
     const { container } = await render(<CreateWalletPanel transport="inline" />);
     expect(cta(container).textContent).toMatch(/Create your Dexter Wallet/i);
-    expect(cta(container).disabled).toBe(true);
+    expect(container.querySelector('.dx-allow')).toBeNull();
+    expect(container.querySelector('.dx-cwp__fine')).toBeNull();
+    expect(container.querySelector('.dx-cwp__status')).toBeNull();
+    expect(cta(container).disabled).toBe(false);
   });
 
   it('zero is not consent: custom "0" leaves the CTA disabled', async () => {
-    const { container } = await render(<CreateWalletPanel transport="inline" />);
+    const { container } = await render(
+      <CreateWalletPanel transport="inline" agentDelegation="configure-now" />,
+    );
     await click(radio(container, 'Custom'));
     await type(container.querySelector('input[inputmode="decimal"]'), '0');
     expect(cta(container).disabled).toBe(true);
   });
 
   it('a valid authored amount enables the CTA', async () => {
-    const { container } = await render(<CreateWalletPanel transport="inline" />);
+    const { container } = await render(
+      <CreateWalletPanel transport="inline" agentDelegation="configure-now" />,
+    );
     await click(radio(container, '$20'));
+    expect(cta(container).disabled).toBe(false);
+  });
+
+  it('owner-only mode needs no allowance and enables creation immediately', async () => {
+    const { container } = await render(
+      <CreateWalletPanel transport="inline" agentDelegation="deferred" />,
+    );
+    expect(container.querySelector('.dx-allow')).toBeNull();
+    expect(container.querySelector('.dx-cwp__fine')).toBeNull();
+    expect(container.querySelector('.dx-cwp__status')).toBeNull();
     expect(cta(container).disabled).toBe(false);
   });
 });
 
 describe('CreateWalletPanel — composition', () => {
-  it('renders the name field (default), the spend label, and the fine print', async () => {
+  it('renders the name field for the default owner Wallet', async () => {
     const { container } = await render(<CreateWalletPanel transport="inline" />);
     expect(container.textContent).toContain('Name your wallet');
+    expect(container.textContent).not.toContain('What agents may spend automatically, per 30 days');
+    const name = container.querySelector('input[maxlength="40"]') as HTMLInputElement | null;
+    expect(name).not.toBeNull();
+    expect(name!.getAttribute('placeholder')).toBe('Dexter Wallet');
+  });
+
+  it('renders the allowance controls only for explicit configure-now creation', async () => {
+    const { container } = await render(
+      <CreateWalletPanel transport="inline" agentDelegation="configure-now" />,
+    );
     expect(container.textContent).toContain('What agents may spend automatically, per 30 days');
     expect(container.textContent).toContain(
       'Starter credit, if available, is separate and never raises this limit.',
     );
-    const name = container.querySelector('input[maxlength="40"]') as HTMLInputElement | null;
-    expect(name).not.toBeNull();
-    expect(name!.getAttribute('placeholder')).toBe('Dexter Wallet');
   });
 
   it('hides the name field when showName is false', async () => {
@@ -94,6 +124,7 @@ describe('CreateWalletPanel — ceremony flow', () => {
         onCreated={onCreated}
         apiBase="https://api.dexter.cash"
         transport="inline"
+        agentDelegation="configure-now"
       />,
     );
     await type(container.querySelector('input[maxlength="40"]'), '  My Wallet  ');
@@ -113,17 +144,37 @@ describe('CreateWalletPanel — ceremony flow', () => {
   it('defaults the name to "Dexter Wallet" when blank', async () => {
     createWallet.mockResolvedValue(OK);
     const { container } = await render(<CreateWalletPanel transport="inline" />);
-    await click(radio(container, '$5'));
     await click(cta(container));
     await flush();
     expect(createWallet.mock.calls[0][0].name).toBe('Dexter Wallet');
+  });
+
+  it('creates owner-only without inventing a spend policy', async () => {
+    createWallet.mockResolvedValue(OK);
+    const { container } = await render(
+      <CreateWalletPanel transport="inline" agentDelegation="deferred" />,
+    );
+
+    await click(cta(container));
+    await flush();
+
+    expect(createWallet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentDelegation: 'deferred',
+        spendPolicy: undefined,
+      }),
+    );
   });
 
   it('surfaces a ConnectError inline + via onError, then offers Retry (state preserved)', async () => {
     createWallet.mockRejectedValue(new ConnectError('initialize_failed', 'boom'));
     const onError = vi.fn();
     const { container } = await render(
-      <CreateWalletPanel onError={onError} transport="inline" />,
+      <CreateWalletPanel
+        onError={onError}
+        transport="inline"
+        agentDelegation="configure-now"
+      />,
     );
     await click(radio(container, '$20'));
     await click(cta(container));
@@ -144,7 +195,9 @@ describe('CreateWalletPanel — ceremony flow', () => {
   it('ignores clicks while a ceremony is already in flight (busy guard)', async () => {
     let resolve!: (r: CreateWalletResult) => void;
     createWallet.mockImplementation(() => new Promise<CreateWalletResult>((r) => (resolve = r)));
-    const { container } = await render(<CreateWalletPanel transport="inline" />);
+    const { container } = await render(
+      <CreateWalletPanel transport="inline" agentDelegation="configure-now" />,
+    );
     await click(radio(container, '$20'));
     await click(cta(container)); // starts ceremony
     await click(cta(container)); // should be ignored (disabled/loading)
@@ -158,9 +211,7 @@ describe('CreateWalletPanel — ceremony flow', () => {
     const { container } = await render(<CreateWalletPanel transport="popup" />);
 
     expect(container.querySelector('.dx-allow')).toBeNull();
-    expect(container.textContent).toContain(
-      'Choose the wallet name and agent allowance there',
-    );
+    expect(container.textContent).toContain('Finish setup in Dexter Wallet.');
     expect(cta(container).textContent).toMatch(/Continue to Dexter Wallet/i);
     expect(cta(container).disabled).toBe(false);
 
@@ -172,7 +223,24 @@ describe('CreateWalletPanel — ceremony flow', () => {
         transport: 'popup',
         name: undefined,
         spendPolicy: undefined,
+        agentDelegation: 'deferred',
       }),
+    );
+  });
+
+  it('tells the hosted window to defer agent authority without allowance copy', async () => {
+    createWallet.mockResolvedValue(OK);
+    const { container } = await render(
+      <CreateWalletPanel transport="popup" agentDelegation="deferred" />,
+    );
+
+    expect(container.textContent).toContain('Finish setup in Dexter Wallet.');
+    expect(container.textContent).not.toContain('agent allowance');
+    await click(cta(container));
+    await flush();
+
+    expect(createWallet).toHaveBeenCalledWith(
+      expect.objectContaining({ agentDelegation: 'deferred' }),
     );
   });
 });

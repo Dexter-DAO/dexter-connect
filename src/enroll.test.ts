@@ -15,9 +15,16 @@ vi.mock('./popup', () => ({
   openCeremonyPopup: vi.fn(),
 }));
 
-// setActiveHandle is the persistence sink under test — spy on it.
+// setActiveWallet is the persistence sink under test.
 vi.mock('./walletStore', () => ({
-  setActiveHandle: vi.fn(),
+  setActiveWallet: vi.fn(() => true),
+}));
+
+vi.mock('./walletProofSession', () => ({
+  walletProofSessionStore: {
+    save: vi.fn(() => ({ kind: 'dexter_wallet_proof_session' })),
+    clear: vi.fn(() => true),
+  },
 }));
 
 import { createWallet } from './enroll';
@@ -25,11 +32,11 @@ import { SESSION_TTL_30D, authoredPolicy } from './policy';
 import { ConnectError } from './types';
 import { startRegistration } from '@simplewebauthn/browser';
 import { openCeremonyPopup } from './popup';
-import { setActiveHandle } from './walletStore';
+import { setActiveWallet } from './walletStore';
 
 const mockStartReg = vi.mocked(startRegistration);
 const mockPopup = vi.mocked(openCeremonyPopup);
-const mockSetActiveHandle = vi.mocked(setActiveHandle);
+const mockSetActiveWallet = vi.mocked(setActiveWallet);
 
 const challengeResp = {
   options: {
@@ -49,7 +56,18 @@ const regResponse = {
   type: 'public-key' as const,
 };
 
-const enrolledResp = { credentialId: 'cred-abc', publicKey: 'pubkey', userHandle: 'handle-xyz' };
+const walletIdentityProof = {
+  token: 'wallet-proof',
+  tokenType: 'Bearer' as const,
+  expiresAt: 2_000_000_000,
+  expiresIn: 2_592_000,
+};
+const enrolledResp = {
+  credentialId: 'cred-abc',
+  publicKey: 'pubkey',
+  userHandle: 'handle-xyz',
+  walletIdentityProof,
+};
 const initResp = { vaultPda: 'vpda', receiveAddress: null, swigStateAddress: 'swig' };
 
 /** Mock the three-leg ceremony: challenge → complete → initialize. */
@@ -91,6 +109,33 @@ describe('createWallet — spendPolicy on the /initialize body', () => {
     expect(body.coolingOffSeconds).toBe(0);
     expect(body).not.toHaveProperty('spendLimitAtomic');
     expect(body).not.toHaveProperty('sessionTtlSeconds');
+  });
+
+  it('creates an explicit deferred wallet owner-only with no spend policy fields', async () => {
+    const fetchMock = mockCeremonyFetch();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await createWallet({ transport: 'inline', agentDelegation: 'deferred' });
+
+    const body = initBody(fetchMock);
+    expect(body.userHandle).toBe('handle-xyz');
+    expect(body).not.toHaveProperty('spendLimitAtomic');
+    expect(body).not.toHaveProperty('sessionTtlSeconds');
+  });
+
+  it('rejects a deferred wallet carrying a spend policy before any ceremony side effect', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      createWallet({
+        transport: 'inline',
+        agentDelegation: 'deferred',
+        spendPolicy: authoredPolicy('20')!,
+      }),
+    ).rejects.toMatchObject({ code: 'conflicting_agent_delegation' });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mockStartReg).not.toHaveBeenCalled();
   });
 
   it('carries the authored allowance + fixed TTL when a spendPolicy is present', async () => {
@@ -143,11 +188,14 @@ describe('createWallet — wallet-store modes', () => {
       credentialId: 'cred-abc',
       vault: { vaultPda: 'vpda', userHandle: 'handle-xyz' },
     });
-    expect(mockSetActiveHandle).toHaveBeenCalledOnce();
-    expect(mockSetActiveHandle).toHaveBeenCalledWith(
-      'handle-xyz',
-      'Committed Wallet',
-      'cred-abc',
+    expect(mockSetActiveWallet).toHaveBeenCalledOnce();
+    expect(mockSetActiveWallet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        handle: 'handle-xyz',
+        label: 'Committed Wallet',
+        credentialId: 'cred-abc',
+        vaultPda: 'vpda',
+      }),
     );
   });
 
@@ -168,7 +216,7 @@ describe('createWallet — wallet-store modes', () => {
     });
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(mockStartReg).toHaveBeenCalledOnce();
-    expect(mockSetActiveHandle).not.toHaveBeenCalled();
+    expect(mockSetActiveWallet).not.toHaveBeenCalled();
   });
 });
 
@@ -179,6 +227,8 @@ describe('createWallet — popup persistence', () => {
   const popupResult = {
     handle: 'popup-handle',
     credentialId: 'popup-cred',
+    label: 'Popup Wallet',
+    walletIdentityProof,
     vault: {
       vaultPda: 'vpda',
       swigAddress: 'swig',
@@ -187,6 +237,7 @@ describe('createWallet — popup persistence', () => {
       publicKey: 'pub',
       userHandle: 'popup-handle',
       credentialId: 'popup-cred',
+      walletLabel: 'Popup Wallet',
     },
   };
 
@@ -207,8 +258,15 @@ describe('createWallet — popup persistence', () => {
     expect(mockPopup).toHaveBeenCalledWith('create', {
       connectHost: undefined,
       name: 'Popup Wallet',
+      agentDelegation: 'deferred',
     });
-    expect(mockSetActiveHandle).toHaveBeenCalledWith('popup-handle', 'Popup Wallet', 'popup-cred');
+    expect(mockSetActiveWallet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        handle: 'popup-handle',
+        label: 'Popup Wallet',
+        credentialId: 'popup-cred',
+      }),
+    );
     expect(out).toEqual(popupResult);
   });
 
@@ -224,8 +282,15 @@ describe('createWallet — popup persistence', () => {
     expect(mockPopup).toHaveBeenCalledWith('create', {
       connectHost: undefined,
       name: 'Popup Wallet',
+      agentDelegation: 'deferred',
     });
-    expect(mockSetActiveHandle).toHaveBeenCalledWith('popup-handle', 'Popup Wallet', 'popup-cred');
+    expect(mockSetActiveWallet).toHaveBeenCalledWith(
+      expect.objectContaining({
+        handle: 'popup-handle',
+        label: 'Popup Wallet',
+        credentialId: 'popup-cred',
+      }),
+    );
     expect(out).toEqual(popupResult);
   });
 
@@ -242,9 +307,26 @@ describe('createWallet — popup persistence', () => {
       connectHost: undefined,
       name: 'Popup Wallet',
       walletStore: 'provisional',
+      agentDelegation: 'deferred',
     });
-    expect(mockSetActiveHandle).not.toHaveBeenCalled();
+    expect(mockSetActiveWallet).not.toHaveBeenCalled();
     expect(out).toEqual(popupResult);
+  });
+
+  it('requests the explicit deferred agent flow from the hosted ceremony', async () => {
+    mockPopup.mockResolvedValueOnce(popupResult);
+
+    await createWallet({
+      transport: 'popup',
+      name: 'Cattle Rider',
+      agentDelegation: 'deferred',
+    });
+
+    expect(mockPopup).toHaveBeenCalledWith('create', {
+      connectHost: undefined,
+      name: 'Cattle Rider',
+      agentDelegation: 'deferred',
+    });
   });
 
   it('does NOT persist when the ceremony is rejected', async () => {
@@ -253,7 +335,7 @@ describe('createWallet — popup persistence', () => {
     await expect(createWallet({ transport: 'popup' })).rejects.toMatchObject({
       code: 'popup_closed',
     });
-    expect(mockSetActiveHandle).not.toHaveBeenCalled();
+    expect(mockSetActiveWallet).not.toHaveBeenCalled();
   });
 
   it('rejects a hostile API base before popup, fetch, or WebAuthn', async () => {
@@ -281,7 +363,22 @@ describe('createWallet — popup persistence', () => {
     expect(mockPopup).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
     expect(mockStartReg).not.toHaveBeenCalled();
-    expect(mockSetActiveHandle).not.toHaveBeenCalled();
+    expect(mockSetActiveWallet).not.toHaveBeenCalled();
+  });
+
+  it('rejects an adjacent agent-delegation mode before popup, fetch, or WebAuthn', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      createWallet({
+        transport: 'popup',
+        agentDelegation: 'later' as never,
+      }),
+    ).rejects.toMatchObject({ code: 'invalid_agent_delegation_mode' });
+    expect(mockPopup).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mockStartReg).not.toHaveBeenCalled();
   });
 });
 

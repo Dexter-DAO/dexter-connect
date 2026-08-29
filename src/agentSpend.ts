@@ -56,7 +56,6 @@ import {
   bytesToBase64,
   bytesToBase64url,
 } from './base64';
-import type { IdentityKind } from './identity';
 import {
   bytesEqual,
   resolveDexterApiBase,
@@ -199,11 +198,11 @@ export function assembleAgentSpendStatus(
 /**
  * The minimal identity the off/on switch needs: WHO is active + the wallet
  * handle the anon router keys on. Structurally satisfied by connect's
- * ResolvedIdentity (pass it straight through), or hand-build `{ kind, userHandle }`.
+ * The canonical connection identity can be passed through directly.
  */
 export interface AgentSpendIdentity {
-  /** Passkey-vault-first identity axis. Agent-spend is Dexter-Wallet-only. */
-  kind: IdentityKind;
+  /** Agent controls require an active Wallet and reject account-only/conflict states. */
+  kind: 'wallet_only' | 'bound';
   /** The passkey-vault user handle the anon router addresses, or null. */
   userHandle: string | null;
 }
@@ -261,7 +260,7 @@ async function agentSpendError(res: Response): Promise<AgentSpendError> {
 
 /** Dexter-Wallet (passkey-vault) guard — the off/on switch is anon-vault only. */
 function assertDexterWallet(id: AgentSpendIdentity): void {
-  if (id.kind !== 'passkey-vault') {
+  if (id.kind !== 'wallet_only' && id.kind !== 'bound') {
     throw new AgentSpendError('not_guest', 'agent-spend off/on switch is Dexter Wallet only');
   }
 }

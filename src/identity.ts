@@ -1,54 +1,39 @@
-// @dexterai/connect — the identity resolver.
-//
-// resolveIdentity is the PURE "who is active" combiner. It unifies the two
-// BROWSER-ONLY identity inputs into one canonical answer:
-//   - an account session token (e.g. a Supabase access_token), and
-//   - the passkey-vault handle (the connect wallet store).
-//
-// It MUST be client-side: no server endpoint knows both inputs unless the client
-// tells it which to pass. It answers WHO is active and deliberately carries NO
-// server/chain FACTS (vault balance, activation, claimed-status) — caching facts
-// here would recreate a split-brain one layer down. Identity = WHO; the consumer
-// (or server) owns WHAT'S TRUE.
-//
-// Passkey-vault-FIRST: the passkey vault is Dexter's primary identity axis (the
-// Dexter Wallet — agent-pay, card spending, and credit all key off user_handle +
-// swig + vault_pda); the account is the secondary/legacy axis. When both are
-// present on a device, the passkey vault leads.
-//
-// Pure (no React, no fetch). The SDK is auth-agnostic: the consumer passes its
-// own account token in. Each consumer layers its own derivations (display, roles)
-// on top of this core, so every surface reads ONE "who is active" (Rule #7).
+// @dexterai/connect: presentation identity derived from the relation controller.
 
-export type IdentityKind = 'passkey-vault' | 'account' | 'none';
+import type { WalletAccountRelationSnapshot } from './relationController';
+
+export type IdentityKind = 'wallet_only' | 'account_only' | 'bound' | 'conflict' | 'none';
 
 export interface IdentityInput {
-  /** An account session token (e.g. Supabase access_token) when present, else null. */
+  /** Current relation-controller snapshot. */
+  relation: WalletAccountRelationSnapshot;
+  /** Candidate account session. It is withheld from the result until bound. */
   accountToken: string | null;
-  /** The passkey-vault user handle (the connect wallet store), else null. */
+  /** Active Wallet handle from the Wallet roster. */
   userHandle: string | null;
-  /** The active wallet's display name from the connect wallet store (persisted
-   *  at sign-in/recover/rename), else null. Browser-only input like the handle. */
+  /** Active Wallet display name from the Wallet roster. */
   walletLabel?: string | null;
 }
 
 export interface ResolvedIdentity {
-  /** The primary identity axis, passkey-vault-first. */
+  /** The relationship state supplied by the controller. */
   kind: IdentityKind;
-  /** Passkey-vault identity (FIRST-CLASS): the wallet handle, or null. */
+  /** Active Wallet handle, or null. */
   userHandle: string | null;
-  /** The wallet's human display name, or null when the wallet was never named
-   *  (or no wallet is active). Display surfaces prefer this over any synthetic
-   *  account identifier — a user should never be shown a generated email. */
+  /** Active Wallet display name, or null. */
   walletLabel: string | null;
-  /** Account identity (secondary/legacy axis): bearer for account-scoped fetches, or null. */
+  /** Account bearer only when the exact Wallet/account pair is bound. */
   accountToken: string | null;
-  /** A passkey vault is present on this device. */
+  /** An active Wallet candidate is present. */
   hasPasskeyVault: boolean;
-  /** An account session is present. */
+  /** An account-session candidate is present. */
   hasAccount: boolean;
-  /** Any identity at all — drives "show the wallet" vs "Sign in with Dexter". */
+  /** An active Wallet is present. Account presence alone does not create one. */
   hasWallet: boolean;
+  /** Account-owned data and destinations may render. */
+  hasAccountAccess: boolean;
+  /** A verified mismatch is waiting for repair. */
+  quarantined: boolean;
 }
 
 function presentOrNull(value: string | null): string | null {
@@ -56,21 +41,22 @@ function presentOrNull(value: string | null): string | null {
 }
 
 export function resolveIdentity(input: IdentityInput): ResolvedIdentity {
-  const userHandle = presentOrNull(input.userHandle);
-  const accountToken = presentOrNull(input.accountToken);
-  // Label only means something when a wallet is actually active.
+  const hasPasskeyVault = input.relation.walletPresent;
+  const hasAccount = input.relation.accountPresent;
+  const userHandle = hasPasskeyVault ? presentOrNull(input.userHandle) : null;
   const walletLabel = userHandle ? presentOrNull(input.walletLabel ?? null) : null;
+  const hasAccountAccess = input.relation.privateAccountAccess;
+  const accountToken = hasAccountAccess ? presentOrNull(input.accountToken) : null;
 
-  const hasPasskeyVault = userHandle !== null;
-  const hasAccount = accountToken !== null;
-  const hasWallet = hasPasskeyVault || hasAccount;
-
-  // Passkey-vault-FIRST: the passkey vault leads when both axes are present.
-  const kind: IdentityKind = hasPasskeyVault
-    ? 'passkey-vault'
-    : hasAccount
-      ? 'account'
-      : 'none';
-
-  return { kind, userHandle, walletLabel, accountToken, hasPasskeyVault, hasAccount, hasWallet };
+  return {
+    kind: input.relation.relation,
+    userHandle,
+    walletLabel,
+    accountToken,
+    hasPasskeyVault,
+    hasAccount,
+    hasWallet: hasPasskeyVault,
+    hasAccountAccess,
+    quarantined: input.relation.quarantined,
+  };
 }

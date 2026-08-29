@@ -9,9 +9,7 @@ const PHASE_LABEL: Record<CeremonyPhase, string> = {
 
 /**
  * Human-readable label for a ceremony phase — the live "connecting step" copy.
- * ONE source of truth so sign-in (SignInWithDexter) and create (consumer setup
- * flows) show identical wording. Consumers surfacing createWallet's `onPhase`
- * should use this instead of hand-rolling their own strings (Rule #7).
+ * One source of truth for sign-in and Wallet-creation progress labels.
  */
 export function ceremonyPhaseLabel(phase: CeremonyPhase): string {
   return PHASE_LABEL[phase];

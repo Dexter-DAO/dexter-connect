@@ -25,26 +25,29 @@ const DEXTER = {
 async function mintToken(opts: {
   iss?: string;
   aud?: string;
-  dexter?: object | undefined;
+  dexter?: unknown;
   expiresIn?: string;
   key?: CryptoKey;
   kid?: string;
   alg?: string;
+  includeSubject?: boolean;
+  sessionId?: unknown;
+  aal?: unknown;
 } = {}): Promise<string> {
   const payload: Record<string, unknown> = {
-    session_id: 'sess-123',
-    aal: 'aal1',
+    session_id: opts.sessionId ?? 'sess-123',
+    aal: opts.aal ?? 'aal1',
     role: 'authenticated',
   };
   if (opts.dexter !== undefined) payload.dexter = opts.dexter;
-  return new SignJWT(payload)
+  let token = new SignJWT(payload)
     .setProtectedHeader({ alg: opts.alg ?? 'ES256', kid: opts.kid ?? 'key-1' })
     .setIssuer(opts.iss ?? ISS)
     .setAudience(opts.aud ?? 'authenticated')
-    .setSubject(SUB)
     .setIssuedAt()
-    .setExpirationTime(opts.expiresIn ?? '5m')
-    .sign(opts.key ?? privateKey);
+    .setExpirationTime(opts.expiresIn ?? '5m');
+  if (opts.includeSubject !== false) token = token.setSubject(SUB);
+  return token.sign(opts.key ?? privateKey);
 }
 
 beforeAll(async () => {
@@ -79,6 +82,44 @@ describe('verifyDexterSession (networkless via jwtKey)', () => {
     if (!result.isSignedIn) return;
     expect(result.vaultAddress).toBeNull();
     expect(result.userHandle).toBeNull();
+  });
+
+  it('accepts a version-1 Dexter claim without the optional userHandle', async () => {
+    const token = await mintToken({ dexter: { ver: 1, vault: DEXTER.vault } });
+    const result = await verifyDexterSession(token, { iss: ISS, jwtKey: publicJwk });
+    expect(result.isSignedIn).toBe(true);
+    if (!result.isSignedIn) return;
+    expect(result.vaultAddress).toBe(DEXTER.vault);
+    expect(result.userHandle).toBeNull();
+  });
+
+  it.each([
+    ['null', null],
+    ['an array', []],
+    ['a primitive', 'not-an-object'],
+    ['an unsupported version', { ...DEXTER, ver: 2 }],
+    ['a non-address vault', { ...DEXTER, vault: 'not-a-solana-address' }],
+    ['a padded userHandle', { ...DEXTER, userHandle: `${DEXTER.userHandle}==` }],
+    ['a non-16-byte userHandle', { ...DEXTER, userHandle: 'c2hvcnQ' }],
+  ])('rejects a signed Dexter claim containing %s', async (_description, dexter) => {
+    const token = await mintToken({ dexter });
+    const result = await verifyDexterSession(token, { iss: ISS, jwtKey: publicJwk });
+    expect(result).toEqual({ isSignedIn: false, reason: 'invalid' });
+  });
+
+  it('rejects a signed token without a subject', async () => {
+    const token = await mintToken({ dexter: DEXTER, includeSubject: false });
+    const result = await verifyDexterSession(token, { iss: ISS, jwtKey: publicJwk });
+    expect(result).toEqual({ isSignedIn: false, reason: 'invalid' });
+  });
+
+  it.each([
+    ['session_id', { sessionId: 42 }],
+    ['aal', { aal: ['aal1'] }],
+  ])('rejects a signed token with a non-string %s', async (_claim, options) => {
+    const token = await mintToken({ dexter: DEXTER, ...options });
+    const result = await verifyDexterSession(token, { iss: ISS, jwtKey: publicJwk });
+    expect(result).toEqual({ isSignedIn: false, reason: 'invalid' });
   });
 
   it('performs zero network calls when jwtKey is provided', async () => {

@@ -6,6 +6,7 @@ import { fetchUsdcBalance } from './balance';
 import { createPasskeySigner } from './signer';
 import { ConnectError } from './types';
 import type {
+  AgentDelegationMode,
   ConnectVault,
   PasskeyLoginTokens,
   SignInResult,
@@ -13,7 +14,7 @@ import type {
   RecoverOutcome,
 } from './types';
 
-/** Dexter's Helius proxy — authoritative for browser Solana reads. */
+/** Dexter's Helius proxy for browser Solana reads. */
 const DEFAULT_RPC = 'https://api.dexter.cash/proxy/helius/rpc';
 
 export type ConnectStatus = 'idle' | 'pending' | 'done' | 'error';
@@ -24,7 +25,7 @@ export interface UseSignInWithDexterConfig {
   /** RPC for the connected-chip balance read. Default: Dexter's Helius proxy. */
   rpcUrl?: string;
   /** Ceremony transport (both verbs). 'auto' (default) = inline on dexter.cash,
-   *  popup anywhere else. Exposed so tests/staging can force a leg —
+   *  popup anywhere else. Tests and staging may force one transport.
    *  CreateWalletPanel already had this knob; the sign-in surface was the odd
    *  one out. */
   transport?: 'auto' | 'popup' | 'inline';
@@ -33,22 +34,28 @@ export interface UseSignInWithDexterConfig {
   /** Chrome-149+ immediate UI mode for the wallet-only verb: instant fast-fail
    *  when this device holds no passkey. Ignored by signIn(). */
   preferImmediate?: boolean;
+  /**
+   * Continue-mode wallet birth behavior. `deferred` creates an owner-only
+   * wallet without asking for agent spending authority. Existing-wallet
+   * sign-in is unchanged.
+   */
+  agentDelegation?: AgentDelegationMode;
 }
 
 export interface UseSignInWithDexter {
   status: ConnectStatus;
-  /** Live ceremony phase while status==='pending' (challenge → passkey →
-   *  verifying); null otherwise. Drives the button's "connecting steps". */
+  /** Live ceremony phase while status==='pending' (challenge, passkey,
+   *  verifying); null otherwise. Drives the button's connecting state. */
   phase: CeremonyPhase | null;
   isVaultConnected: boolean;
   /** Run the ceremony. Resolves with the result; throws ConnectError on failure
    *  (error is also captured in `error` + `status==='error'` for declarative UI). */
   signIn: () => Promise<SignInResult>;
   /** Wallet-only sign-in (P0c): re-points this browser at an existing wallet,
-   *  mints NO session. Returns a discriminated outcome — cancel is a normal
+   *  mints NO session. Returns a discriminated outcome; cancel is a normal
    *  result, never a throw. Identity surfaces (useIdentity/useDexterWallet)
    *  light up via the wallet store; `session`/`vault` here stay null. Fire on
-   *  tap only — never on mount (iOS gesture rule). */
+   *  tap only and never on mount (iOS gesture rule). */
   recover: () => Promise<RecoverOutcome>;
   /** One-button register-or-sign-in (keychain-first; see continueWithDexter).
    *  Terminal kinds update session/vault state; needs_create / needs_choice /
@@ -56,6 +63,12 @@ export interface UseSignInWithDexter {
   continueWith: () => Promise<ContinueResult>;
   /** Last recover outcome; null until recover() settles. */
   recovered: RecoverOutcome | null;
+  /** Clear the account session and ceremony result held by this hook. */
+  signOutAccount: () => void;
+  /**
+   * @deprecated Use `signOutAccount()`. To disconnect the active Wallet while
+   * retaining it on this device, use `useDexterWallet().disconnect()`.
+   */
   disconnect: () => void;
   session: PasskeyLoginTokens | null;
   vault: ConnectVault | null;
@@ -66,25 +79,32 @@ export interface UseSignInWithDexter {
   /** Guest passkey signer for authorizing spends / opening x402 tabs. null until
    *  a vault is connected. Drive it via `passkeySigner.signOperation(op)`. */
   passkeySigner: PasskeySignerWithPublicKey | null;
-  /** USD available. number once read; null = unknown → chip shows wallet only. */
+  /** USD available. A null value means the balance has not loaded. */
   usdcBalance: number | null;
   refreshBalance: () => Promise<void>;
   error: ConnectError | null;
 }
 
 /**
- * "Sign in with Dexter" — React surface over the login ceremony.
+ * React surface for the Sign in with Dexter ceremony.
  *
  * Returns the Supabase session (always) plus the vault identity + USD balance
  * (vault-review's login payload is live). dexter.cash login needs only
  * `session`; the vault fields + balance drive the connected chip. The
- * passkeySigner (for opening x402 tabs — dexter-agents) lands next, on the
+ * passkeySigner for dexter-agents x402 tabs uses the
  * anon ServerPolicy bridge over the now-live publicKey/credentialId.
  */
 export function useSignInWithDexter(
   config: UseSignInWithDexterConfig = {},
 ): UseSignInWithDexter {
-  const { apiBase, rpcUrl = DEFAULT_RPC, transport, connectHost, preferImmediate } = config;
+  const {
+    apiBase,
+    rpcUrl = DEFAULT_RPC,
+    transport,
+    connectHost,
+    preferImmediate,
+    agentDelegation,
+  } = config;
   const [status, setStatus] = useState<ConnectStatus>('idle');
   const [phase, setPhase] = useState<CeremonyPhase | null>(null);
   const [session, setSession] = useState<PasskeyLoginTokens | null>(null);
@@ -95,7 +115,7 @@ export function useSignInWithDexter(
 
   const refreshBalance = useCallback(async () => {
     const ata = vault?.usdcAta;
-    if (!ata) return; // no swig/ATA yet → leave balance unknown
+    if (!ata) return; // no swig/ATA yet; leave balance unknown
     setUsdcBalance(await fetchUsdcBalance(rpcUrl, ata));
   }, [vault, rpcUrl]);
 
@@ -113,7 +133,7 @@ export function useSignInWithDexter(
         setPhase,
       );
       setSession(result.session);
-      setVault(result.vault ?? null);
+      setVault(result.vault);
       setStatus('done');
       setPhase(null);
       return result;
@@ -146,8 +166,7 @@ export function useSignInWithDexter(
       setError(outcome.error ?? new ConnectError('recover_failed'));
       setStatus('error');
     } else {
-      // no_credential / cancelled are normal user outcomes, not failures —
-      // back to idle so the button is immediately tappable again.
+      // no_credential and cancelled return to an immediately tappable idle state.
       setStatus('idle');
     }
     return outcome;
@@ -163,20 +182,20 @@ export function useSignInWithDexter(
           ...(apiBase ? { apiBase } : {}),
           ...(transport ? { transport } : {}),
           ...(connectHost ? { connectHost } : {}),
+          ...(agentDelegation ? { agentDelegation } : {}),
         },
         setPhase,
       );
       setPhase(null);
       if (result.kind === 'signin') {
         setSession(result.session);
-        setVault(result.vault ?? null);
+        setVault(result.vault);
         setStatus('done');
       } else if (result.kind === 'create') {
         setVault(result.vault);
         setStatus('done');
       } else {
-        // needs_create / needs_choice / cancelled — normal outcomes, back to
-        // idle so the button is immediately tappable again.
+        // These outcomes return to an immediately tappable idle state.
         setStatus('idle');
       }
       return result;
@@ -188,9 +207,9 @@ export function useSignInWithDexter(
       setPhase(null);
       throw e;
     }
-  }, [apiBase, transport, connectHost]);
+  }, [apiBase, transport, connectHost, agentDelegation]);
 
-  const disconnect = useCallback(() => {
+  const signOutAccount = useCallback(() => {
     setSession(null);
     setVault(null);
     setUsdcBalance(null);
@@ -225,7 +244,8 @@ export function useSignInWithDexter(
     recover,
     continueWith,
     recovered,
-    disconnect,
+    signOutAccount,
+    disconnect: signOutAccount,
     session,
     vault,
     vaultAddress: vault?.swigAddress ?? null,

@@ -1,91 +1,147 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { resolveIdentity } from './identity';
+import type {
+  WalletAccountRelation,
+  WalletAccountRelationSnapshot,
+} from './relationController';
 
-/**
- * resolveIdentity is the PURE "who is active" combiner — the spine of the single
- * identity source of truth. It answers WHO from browser state only (account
- * session token + passkey-vault handle), carries NO server/chain facts, and is
- * passkey-vault-FIRST.
- */
-describe('resolveIdentity — the WHO combiner (browser state only, no facts)', () => {
-  it('no account, no passkey vault → none', () => {
-    expect(resolveIdentity({ accountToken: null, userHandle: null })).toEqual({
-      kind: 'none',
-      userHandle: null,
-      walletLabel: null,
-      accountToken: null,
-      hasPasskeyVault: false,
-      hasAccount: false,
-      hasWallet: false,
-    });
-  });
+function snapshot(
+  relation: WalletAccountRelation,
+  walletPresent: boolean,
+  accountPresent: boolean,
+  privateAccountAccess = false,
+  quarantined = relation === 'conflict',
+): WalletAccountRelationSnapshot {
+  return {
+    relation,
+    runtime: { phase: 'ready' },
+    walletPresent,
+    accountPresent,
+    privateAccountAccess,
+    quarantined,
+    verifiedAt: privateAccountAccess || quarantined ? 123 : null,
+    revision: 1,
+  };
+}
 
-  it('passkey vault only → passkey-vault (first-class)', () => {
-    expect(resolveIdentity({ accountToken: null, userHandle: 'handle-abc' })).toEqual({
-      kind: 'passkey-vault',
-      userHandle: 'handle-abc',
-      walletLabel: null,
-      accountToken: null,
-      hasPasskeyVault: true,
-      hasAccount: false,
-      hasWallet: true,
-    });
-  });
-
-  it('account only → account', () => {
-    expect(resolveIdentity({ accountToken: 'jwt-xyz', userHandle: null })).toEqual({
-      kind: 'account',
-      userHandle: null,
-      walletLabel: null,
-      accountToken: 'jwt-xyz',
-      hasPasskeyVault: false,
-      hasAccount: true,
-      hasWallet: true,
-    });
-  });
-
-  it('both present → passkey-vault WINS the kind (passkey-vault-FIRST); both flags true', () => {
-    expect(resolveIdentity({ accountToken: 'jwt-xyz', userHandle: 'handle-abc' })).toEqual({
-      kind: 'passkey-vault',
-      userHandle: 'handle-abc',
-      walletLabel: null,
-      accountToken: 'jwt-xyz',
-      hasPasskeyVault: true,
-      hasAccount: true,
-      hasWallet: true,
-    });
-  });
-
-  it('empty strings are treated as absent (defensive)', () => {
-    expect(resolveIdentity({ accountToken: '', userHandle: '' })).toEqual({
-      kind: 'none',
-      userHandle: null,
-      walletLabel: null,
-      accountToken: null,
-      hasPasskeyVault: false,
-      hasAccount: false,
-      hasWallet: false,
-    });
-  });
-
-  it('wallet label rides identity when a wallet is active (first-class name)', () => {
+describe('resolveIdentity', () => {
+  it('returns an empty presentation when neither candidate exists', () => {
     expect(
-      resolveIdentity({ accountToken: null, userHandle: 'handle-abc', walletLabel: 'BranchWallet' }),
+      resolveIdentity({
+        relation: snapshot('none', false, false),
+        accountToken: null,
+        userHandle: null,
+      }),
     ).toEqual({
-      kind: 'passkey-vault',
-      userHandle: 'handle-abc',
+      kind: 'none',
+      userHandle: null,
+      walletLabel: null,
+      accountToken: null,
+      hasPasskeyVault: false,
+      hasAccount: false,
+      hasWallet: false,
+      hasAccountAccess: false,
+      quarantined: false,
+    });
+  });
+
+  it('presents a Wallet without inventing account access', () => {
+    expect(
+      resolveIdentity({
+        relation: snapshot('wallet_only', true, false),
+        accountToken: null,
+        userHandle: 'handle-a',
+        walletLabel: 'BranchWallet',
+      }),
+    ).toMatchObject({
+      kind: 'wallet_only',
+      userHandle: 'handle-a',
       walletLabel: 'BranchWallet',
       accountToken: null,
-      hasPasskeyVault: true,
-      hasAccount: false,
       hasWallet: true,
+      hasAccountAccess: false,
     });
   });
 
-  it('label without an active wallet is discarded (no orphan names)', () => {
+  it('does not turn an account session into a Wallet', () => {
     expect(
-      resolveIdentity({ accountToken: 'jwt-xyz', userHandle: null, walletLabel: 'Stale' }).walletLabel,
+      resolveIdentity({
+        relation: snapshot('account_only', false, true),
+        accountToken: 'account-bearer',
+        userHandle: null,
+      }),
+    ).toMatchObject({
+      kind: 'account_only',
+      accountToken: null,
+      hasPasskeyVault: false,
+      hasAccount: true,
+      hasWallet: false,
+      hasAccountAccess: false,
+    });
+  });
+
+  it('withholds the account bearer while a pair is being checked', () => {
+    const relation: WalletAccountRelationSnapshot = {
+      ...snapshot('wallet_only', true, true),
+      runtime: { phase: 'checking', reason: 'restore' },
+    };
+
+    expect(
+      resolveIdentity({
+        relation,
+        accountToken: 'candidate-account-bearer',
+        userHandle: 'handle-a',
+      }).accountToken,
     ).toBeNull();
+  });
+
+  it('exposes the account bearer only after the exact pair is bound', () => {
+    expect(
+      resolveIdentity({
+        relation: snapshot('bound', true, true, true),
+        accountToken: 'bound-account-bearer',
+        userHandle: 'handle-a',
+        walletLabel: 'BranchWallet',
+      }),
+    ).toMatchObject({
+      kind: 'bound',
+      accountToken: 'bound-account-bearer',
+      userHandle: 'handle-a',
+      hasWallet: true,
+      hasAccountAccess: true,
+      quarantined: false,
+    });
+  });
+
+  it('withholds the account bearer for a verified mismatch', () => {
+    expect(
+      resolveIdentity({
+        relation: snapshot('conflict', true, true),
+        accountToken: 'account-b',
+        userHandle: 'handle-a',
+      }),
+    ).toMatchObject({
+      kind: 'conflict',
+      accountToken: null,
+      hasAccountAccess: false,
+      quarantined: true,
+    });
+  });
+
+  it('drops empty candidate strings and a label without an active Wallet', () => {
+    expect(
+      resolveIdentity({
+        relation: snapshot('account_only', false, true),
+        accountToken: '',
+        userHandle: '',
+        walletLabel: 'Stale',
+      }),
+    ).toMatchObject({
+      userHandle: null,
+      walletLabel: null,
+      accountToken: null,
+      hasWallet: false,
+    });
   });
 });

@@ -1,27 +1,18 @@
-// @dexterai/connect — framework-free entry.
-// The React surface (<SignInWithDexter/> + useSignInWithDexter()) is in ./react.
+// @dexterai/connect framework-neutral entry.
 
-export { passkeyLogin, continueWithDexter } from './relay';
-export type { ContinueResult } from './relay';
 export { ConnectError } from './types';
 export type {
   PasskeyLoginTokens,
   ConnectVault,
   SignInResult,
   DexterConnectConfig,
-  PasskeyLoginConfig,
-  WalletStoreMode,
+  AgentDelegationMode,
+  WalletIdentityProof,
 } from './types';
 export { createAnonServerPolicy } from './anon-policy';
 export type { AnonServerPolicy, AnonChallengeResult } from './anon-policy';
 export { createPasskeySigner } from './signer';
 export type { CreatePasskeySignerOptions } from './signer';
-// The identity resolver: the single "who is active" combiner (account session +
-// passkey-vault handle). Pure, framework-free, passkey-vault-FIRST. The SDK stays
-// auth-agnostic — the consumer passes its account token in. Identity = WHO; facts
-// (balance/claimed) stay server-side. One resolver for every consumer (Rule #7).
-export { resolveIdentity } from './identity';
-export type { IdentityKind, IdentityInput, ResolvedIdentity } from './identity';
 // Wallet creation: mint a brand-new passkey + vault, named at birth. The
 // lifecycle verb that was missing — pairs with passkeyLogin (sign in an existing
 // wallet) so any consumer can create one, not just dexter-fe.
@@ -34,6 +25,77 @@ export type { CreateWalletConfig, CreateWalletResult } from './enroll';
 // on mount. UI copy stays "Sign in with Dexter"; "recover" never reaches users.
 export { recoverWallet } from './recover';
 export type { RecoverOutcome, RecoverVault, RecoverWalletConfig } from './types';
+// Wallet/account relationship state. A consumer supplies the API verifier;
+// this controller keeps account data closed while restoring, switching, or
+// completing a full sign-in, and exposes it only after the exact pair is bound.
+export { WalletAccountRelationController } from './relationController';
+export type {
+  WalletAccountRelation,
+  RelationCheckReason,
+  RelationRuntime,
+  WalletAccountRelationSnapshot,
+  ServerRelationVerificationResult,
+  ServerRelationVerificationRequest,
+  ServerRelationVerifier,
+  WalletAccountRelationControllerOptions,
+  RelationCandidates,
+} from './relationController';
+export {
+  WALLET_ACCOUNT_BINDING_PATH,
+  walletBindingCandidate,
+  accountBindingCandidate,
+  createWalletAccountBindingClient,
+} from './bindingResolver';
+export type {
+  ResolvedWalletAccountRelation,
+  WalletBindingCandidate,
+  AccountBindingCandidate,
+  BindingResolutionResult,
+  ResolveWalletAccountBindingInput,
+  BindingFetch,
+  WalletAccountBindingClientConfig,
+  WalletAccountBindingClient,
+} from './bindingResolver';
+export {
+  createWalletProofSessionStore,
+  walletProofSessionStore,
+  WALLET_PROOF_SESSION_STORAGE_PREFIX,
+} from './walletProofSession';
+export { createDexterIdentityCoordinator } from './identityCoordinator';
+export type {
+  DexterIdentityCoordinator,
+  DexterIdentityCoordinatorOptions,
+} from './identityCoordinator';
+export {
+  connectDexterIdentity,
+  disconnectDexterIdentity,
+} from './identityTransition';
+export type {
+  AccountSessionInstaller,
+  AccountSessionClearer,
+  ConnectDexterIdentityConfig,
+  DisconnectDexterIdentityConfig,
+} from './identityTransition';
+export { createDexterControlModel } from './connectionContract';
+export type {
+  DexterConnectionIntent,
+  DexterConnectionCapability,
+  DexterControlStage,
+  DexterControlPrimaryAction,
+  DexterConnectionPermissions,
+  DexterControlModel,
+} from './connectionContract';
+export type {
+  WalletProofSession,
+  WalletProofSessionOperation,
+  WalletProofSessionEvent,
+  WalletProofLifecycleEvent,
+  WalletProofSessionStorage,
+  WalletProofStorageEvent,
+  WalletProofStorageEventSource,
+  WalletProofSessionStoreOptions,
+  WalletProofSessionStore,
+} from './walletProofSession';
 export type {
   CeremonyPhase,
   CeremonyOperation,
@@ -51,21 +113,6 @@ export type { SpendPolicy } from './policy';
 // Human label for a ceremony phase — one source of truth for "connecting steps"
 // copy across sign-in and consumer create flows (Rule #7).
 export { ceremonyPhaseLabel } from './phase';
-// Wallet-identity store: the canonical owner of the active wallet handle, with
-// first-class eject/switch/list. Consumers MUST read/write through here instead
-// of touching localStorage by hand (the welded-wallet bug fix).
-export {
-  getActiveHandle,
-  setActiveHandle,
-  ejectActiveWallet,
-  listWallets,
-  switchWallet,
-  forgetWallet,
-  getCredentialId,
-  subscribe as subscribeWallet,
-  ACTIVE_WALLET_STORAGE_KEY,
-} from './walletStore';
-export type { StoredWallet } from './walletStore';
 // WebAuthn Signal API: keep the OS keychain in sync — rename a passkey
 // post-creation, auto-prune deleted/stale passkeys. Feature-detected; no-op
 // where the browser lacks support (naming-at-creation stays the floor).

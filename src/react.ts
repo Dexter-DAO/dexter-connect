@@ -1,47 +1,48 @@
 // @dexterai/connect/react — React surface.
-
-export { useSignInWithDexter } from './useSignInWithDexter';
-export type {
-  UseSignInWithDexter,
-  UseSignInWithDexterConfig,
-  ConnectStatus,
-} from './useSignInWithDexter';
-
-export { SignInWithDexter } from './SignInWithDexter';
-export type { SignInWithDexterProps } from './SignInWithDexter';
 // Recover-mode outcome types re-exported here so a react-only consumer never
 // needs a second import from the root entry (Rule #7 — one obvious path).
-export type { RecoverOutcome, RecoverVault } from './types';
+export type {
+  ConnectVault,
+  RecoverOutcome,
+  RecoverVault,
+  SignInResult,
+  WalletIdentityProof,
+} from './types';
+export type { CreateWalletResult } from './enroll';
+export type { WalletAccountRelationSnapshot } from './relationController';
 
-// The one branded button — used by SignInWithDexter and by the wallet create
-// flow (wire it to your own action). One button, many surfaces (Rule #7).
+// Dexter's branded action button. Consumers can wire it to the canonical
+// control or a Wallet-creation action.
 export { DexterButton, DexterMark } from './DexterButton';
 export type { DexterButtonProps } from './DexterButton';
 
-export { useDexterWallet } from './useDexterWallet';
-export type { UseDexterWallet } from './useDexterWallet';
+export type { DexterAccountSession } from './useDexterIdentity';
+export {
+  useDexterConnection,
+  REMOVE_DEXTER_FROM_DEVICE_CONFIRMATION,
+} from './useDexterConnection';
+export type {
+  DexterConnectionOperation,
+  DexterIdentityView,
+  DexterWalletView,
+  RemoveDexterFromDeviceConfirmation,
+  RemoveDexterFromDeviceResult,
+  UseDexterConnectionConfig,
+  UseDexterConnection,
+} from './useDexterConnection';
+export type {
+  DexterConnectionIntent,
+  DexterConnectionCapability,
+  DexterControlStage,
+  DexterControlPrimaryAction,
+  DexterConnectionPermissions,
+  DexterControlModel,
+} from './connectionContract';
 
-// The branded wallet kit — the chip (header trigger) and the menu (manage / save
-// / start fresh). One branded wallet surface for every consumer (Rule #7);
-// themeable via --dx-* CSS vars. Presentational: the consumer feeds computed
-// labels + wires action callbacks.
-export { DexterWalletChip } from './DexterWalletChip';
-export type { DexterWalletChipProps } from './DexterWalletChip';
-export { DexterWalletMenu } from './DexterWalletMenu';
-export type { DexterWalletMenuProps } from './DexterWalletMenu';
-
-// useIdentity: the React binding for the identity resolver — combines the wallet
-// store (passkey) with the account token the consumer passes in. One "who is
-// active" for every surface and every consumer (Rule #7).
-export { useIdentity } from './useIdentity';
-export type { UseIdentityConfig } from './useIdentity';
-
-// Consent-at-birth chrome (Branch rulings 2026-07-02/03). AllowanceChips = the
-// $5/$20/$50/Custom allowance primitive (NONE preselected; zero is not consent);
-// CreateWalletPanel = the turnkey create surface that collects the authored
-// number and gates the branded Create CTA shut until it's valid, then runs the
-// full createWallet ceremony. One consent surface for every door (Rule #7);
-// themeable via --dx-* CSS vars.
+// Wallet-creation chrome. AllowanceChips is the $5/$20/$50/Custom primitive
+// (none preselected; zero is not consent). CreateWalletPanel either collects an
+// authored allowance or, when explicitly deferred, creates owner-only. One
+// creation surface for every door; themeable via --dx-* CSS vars.
 export { AllowanceChips } from './AllowanceChips';
 export type { AllowanceChipsProps } from './AllowanceChips';
 export { CreateWalletPanel } from './CreateWalletPanel';

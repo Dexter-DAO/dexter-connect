@@ -7,7 +7,12 @@ import type {
   CeremonyPhase,
   WalletStoreMode,
 } from './types';
-import { ConnectError, resolveWalletStoreMode } from './types';
+import {
+  ConnectError,
+  parseWalletIdentityProof,
+  resolveAgentDelegationMode,
+  resolveWalletStoreMode,
+} from './types';
 import { startAuthentication, browserSupportsWebAuthn } from '@simplewebauthn/browser';
 import type {
   AuthenticationResponseJSON,
@@ -15,7 +20,8 @@ import type {
 } from '@simplewebauthn/browser';
 import { shouldUsePopup, openCeremonyPopup } from './popup';
 import { createWallet, type CreateWalletConfig, type CreateWalletResult } from './enroll';
-import { getActiveHandle, setActiveHandle } from './walletStore';
+import { getActiveHandle } from './walletStore';
+import { activateConnectVault } from './walletActivation';
 import { readErrorCode } from './httpError';
 import {
   classifyWebAuthnRejection,
@@ -54,15 +60,17 @@ export async function passkeyLogin(
   // Hosted-popup transport: on any non-Dexter origin, run the ceremony in a
   // popup on dexter.cash and get the same result back (works on any website).
   if (shouldUsePopup(config.transport)) {
-    const result = await openCeremonyPopup<SignInResult>('signin', {
-      connectHost: config.connectHost,
-      ...(walletStore === 'provisional' ? { walletStore } : {}),
-    });
+    const result = normalizeSignInResult(
+      await openCeremonyPopup<SignInResult>('signin', {
+        connectHost: config.connectHost,
+        ...(walletStore === 'provisional' ? { walletStore } : {}),
+      }),
+    );
     // Commit mode preserves the historical active-wallet behavior. A
     // provisional caller receives the same verified result with zero store
     // writes on either origin, then explicitly commits after approval.
-    if (walletStore === 'commit' && result.vault) {
-      setActiveHandle(result.vault.userHandle, result.vault.walletLabel ?? undefined, result.vault.credentialId);
+    if (walletStore === 'commit') {
+      activateConnectVault(result.vault, result.walletIdentityProof);
     }
     return result;
   }
@@ -82,10 +90,9 @@ export async function passkeyLogin(
   }
   onPhase?.('verifying');
   const result = await submitLogin(apiBase, response);
-  // Persist a successful inline sign-in only in commit mode (guarded: no vault,
-  // nothing to record — same discipline as the popup path above).
-  if (walletStore === 'commit' && result.vault) {
-    setActiveHandle(result.vault.userHandle, result.vault.walletLabel ?? undefined, result.vault.credentialId);
+  // Persist a successful inline sign-in only in commit mode.
+  if (walletStore === 'commit') {
+    activateConnectVault(result.vault, result.walletIdentityProof);
   }
   return result;
 }
@@ -107,15 +114,16 @@ export async function passkeyLogin(
 //      Return needs_choice: the caller renders an explicit sign-in / create
 //      fork. The verb never guess-creates.
 //
-// Consent-at-birth: the create leg runs ONLY when the caller already authored
-// a spendPolicy (fail-closed, same rule as the hosted page). Without one the
+// Agent setup at birth: the historical create leg runs only when the caller
+// already authored a spendPolicy. An explicit agentDelegation:'deferred' instead
+// creates owner-only without inventing an allowance. With neither choice, the
 // verb returns needs_create and the caller collects name + allowance first.
 export type ContinueResult =
   | ({ kind: 'signin' } & SignInResult)
   | ({ kind: 'create' } & CreateWalletResult)
   /** This device has no passkey (proven by an immediate fast-fail) but the
-   *  caller supplied no authored spendPolicy — collect name + allowance,
-   *  then call createWallet. */
+   *  caller supplied neither an authored spendPolicy nor explicit deferred
+   *  agent setup — collect name + allowance, then call createWallet. */
   | { kind: 'needs_create' }
   /** Cannot silently probe (no immediate support, no local handle): render an
    *  explicit "Sign in" / "I'm new" choice. Never guess. */
@@ -130,24 +138,46 @@ export async function continueWithDexter(
   // Validate before either opening the trusted popup, fetching, reading the
   // wallet store, or touching WebAuthn.
   const walletStore = resolveWalletStoreMode(config.walletStore);
+  const agentDelegation = resolveAgentDelegationMode(
+    config.agentDelegation ?? (config.spendPolicy ? 'configure-now' : undefined),
+  );
+  const hasExplicitCreationChoice =
+    config.agentDelegation !== undefined || Boolean(config.spendPolicy);
   resolveDexterApiBase(config.apiBase);
+  if (agentDelegation === 'deferred' && config.spendPolicy) {
+    throw new ConnectError(
+      'conflicting_agent_delegation',
+      'agentDelegation deferred cannot include a spendPolicy',
+    );
+  }
   // Off-origin: the popup on dexter.cash decides (it alone can see the
   // dexter.cash keychain/handle); only terminal outcomes ride back.
   if (shouldUsePopup(config.transport)) {
-    const result = await openCeremonyPopup<ContinueResult>('continue', {
+    const popupResult = await openCeremonyPopup<ContinueResult>('continue', {
       connectHost: config.connectHost,
       name: config.name,
       ...(walletStore === 'provisional' ? { walletStore } : {}),
+      agentDelegation,
     });
+    const result: ContinueResult =
+      popupResult.kind === 'signin'
+        ? { kind: 'signin', ...normalizeSignInResult(popupResult) }
+        : popupResult.kind === 'create'
+          ? {
+              ...popupResult,
+              walletIdentityProof: parseWalletIdentityProof(
+                popupResult.walletIdentityProof,
+              ),
+            }
+          : popupResult;
     // Commit mode mirrors whichever terminal identity the popup resolved. In
     // provisional mode neither the hosted nor caller origin may change its
     // active handle/roster. Non-terminal kinds carry no identity.
     if (walletStore === 'commit') {
       if (result.kind === 'create') {
-        // The result's label wins — the name may have been typed on the hosted page.
-        setActiveHandle(result.handle, result.label ?? config.name, result.credentialId);
-      } else if (result.kind === 'signin' && result.vault) {
-        setActiveHandle(result.vault.userHandle, result.vault.walletLabel ?? undefined, result.vault.credentialId);
+        activateConnectVault(result.vault, result.walletIdentityProof);
+      } else if (result.kind === 'signin') {
+        activateConnectVault(result.vault, result.walletIdentityProof);
       }
     }
     return result;
@@ -158,8 +188,11 @@ export async function continueWithDexter(
     const probe = await immediatePasskeyLogin(config, onPhase, walletStore);
     if (probe.outcome === 'signin') return { kind: 'signin', ...probe.result };
     if (probe.outcome === 'cancelled') return { kind: 'cancelled' };
-    // outcome === 'no_credential' — proven empty device; create needs consent.
-    if (!config.spendPolicy) return { kind: 'needs_create' };
+    // outcome === 'no_credential' — proven empty device; create needs either
+    // authored agent authority or an explicit owner-only choice.
+    if (!hasExplicitCreationChoice) {
+      return { kind: 'needs_create' };
+    }
     const created = await createWallet({ ...config, onPhase });
     return { kind: 'create', ...created };
   }
@@ -205,12 +238,8 @@ async function immediatePasskeyLogin(
   }
   onPhase?.('verifying');
   const result = await submitLogin(apiBase, response);
-  if (walletStore === 'commit' && result.vault) {
-    setActiveHandle(
-      result.vault.userHandle,
-      result.vault.walletLabel ?? undefined,
-      result.vault.credentialId,
-    );
+  if (walletStore === 'commit') {
+    activateConnectVault(result.vault, result.walletIdentityProof);
   }
   return { outcome: 'signin', result };
 }
@@ -249,7 +278,13 @@ async function submitLogin(
     throw new ConnectError(await readErrorCode(res), `passkey-login ${res.status}`);
   }
 
-  const data = (await res.json()) as PasskeyLoginTokens & { vault?: ConnectVault };
+  const data = (await res.json()) as PasskeyLoginTokens & {
+    vault?: ConnectVault;
+    walletIdentityProof?: unknown;
+  };
+  if (!data.vault) {
+    throw new ConnectError('passkey_login_vault_missing');
+  }
   const session: PasskeyLoginTokens = {
     accessToken: data.accessToken,
     refreshToken: data.refreshToken,
@@ -257,5 +292,23 @@ async function submitLogin(
     expiresIn: data.expiresIn,
     tokenType: data.tokenType,
   };
-  return data.vault ? { session, vault: data.vault } : { session };
+  return {
+    session,
+    vault: data.vault,
+    walletIdentityProof: parseWalletIdentityProof(data.walletIdentityProof),
+  };
+}
+
+function normalizeSignInResult(value: SignInResult): SignInResult {
+  if (!value?.vault) {
+    throw new ConnectError('passkey_login_vault_missing');
+  }
+  if (!value.session) {
+    throw new ConnectError('passkey_login_session_missing');
+  }
+  return {
+    session: value.session,
+    vault: value.vault,
+    walletIdentityProof: parseWalletIdentityProof(value.walletIdentityProof),
+  };
 }
