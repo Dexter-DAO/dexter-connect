@@ -21,20 +21,27 @@ vi.mock('./popup', () => ({
 // setActiveHandle is the persistence sink under test — spy on it. getActiveHandle
 // is only read by continueWithDexter's inline branch (not exercised here).
 vi.mock('./walletStore', () => ({
-  setActiveHandle: vi.fn(),
+  setActiveWallet: vi.fn(() => true),
   getActiveHandle: vi.fn(() => null),
+}));
+
+vi.mock('./walletProofSession', () => ({
+  walletProofSessionStore: {
+    save: vi.fn(() => ({ kind: 'dexter_wallet_proof_session' })),
+    clear: vi.fn(() => true),
+  },
 }));
 
 import { passkeyLogin, continueWithDexter } from './relay';
 import { startAuthentication, browserSupportsWebAuthn } from '@simplewebauthn/browser';
 import { openCeremonyPopup } from './popup';
-import { setActiveHandle } from './walletStore';
+import { setActiveWallet } from './walletStore';
 import { ConnectError } from './types';
 
 const mockStartAuth = vi.mocked(startAuthentication);
 const mockSupports = vi.mocked(browserSupportsWebAuthn);
 const mockPopup = vi.mocked(openCeremonyPopup);
-const mockSetActiveHandle = vi.mocked(setActiveHandle);
+const mockSetActiveWallet = vi.mocked(setActiveWallet);
 
 // A full ConnectVault (all fields present) for the persistence assertions.
 const fullVault = {
@@ -45,6 +52,13 @@ const fullVault = {
   publicKey: 'pub',
   userHandle: 'u-handle',
   credentialId: 'c-id',
+};
+
+const walletIdentityProof = {
+  token: 'wallet-proof',
+  tokenType: 'Bearer' as const,
+  expiresAt: 2_000_000_000,
+  expiresIn: 2_592_000,
 };
 
 const challengeResp = {
@@ -92,14 +106,18 @@ describe('passkeyLogin', () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce({ ok: true, json: async () => challengeResp })
-      .mockResolvedValueOnce({ ok: true, json: async () => tokensResp });
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ ...tokensResp, vault: fullVault, walletIdentityProof }),
+      });
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await passkeyLogin({ apiBase: 'https://api.dexter.cash' });
 
     expect(result.session.accessToken).toBe('at');
     expect(result.session.tokenType).toBe('bearer');
-    expect(result.vault).toBeUndefined(); // vault-review hasn't shipped the vault payload yet
+    expect(result.vault).toEqual(fullVault);
+    expect(result.walletIdentityProof).toEqual(walletIdentityProof);
     // the server's options are handed to the library verbatim
     expect(mockStartAuth).toHaveBeenCalledWith({ optionsJSON: challengeResp.options });
     expect(fetchMock.mock.calls[0][0]).toContain('/api/passkey-anon/sign/login-challenge');
@@ -120,7 +138,10 @@ describe('passkeyLogin', () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce({ ok: true, json: async () => challengeResp })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ ...tokensResp, vault }) });
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ ...tokensResp, vault, walletIdentityProof }),
+      });
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await passkeyLogin();
@@ -192,42 +213,52 @@ describe('passkeyLogin — active-handle persistence', () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce({ ok: true, json: async () => challengeResp })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ ...tokensResp, vault: fullVault }) });
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ ...tokensResp, vault: fullVault, walletIdentityProof }),
+      });
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await passkeyLogin({ transport: 'inline' });
 
     expect(result.vault).toEqual(fullVault);
-    expect(mockSetActiveHandle).toHaveBeenCalledWith('u-handle', undefined, 'c-id');
+    expect(mockSetActiveWallet).toHaveBeenCalledWith(
+      expect.objectContaining({ handle: 'u-handle', credentialId: 'c-id' }),
+    );
   });
 
-  it('inline: does NOT persist when the login returns no vault', async () => {
+  it('inline: rejects a malformed success with no vault and does not persist', async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce({ ok: true, json: async () => challengeResp })
       .mockResolvedValueOnce({ ok: true, json: async () => tokensResp });
     vi.stubGlobal('fetch', fetchMock);
 
-    await passkeyLogin({ transport: 'inline' });
+    await expect(passkeyLogin({ transport: 'inline' })).rejects.toMatchObject({
+      code: 'passkey_login_vault_missing',
+    });
 
-    expect(mockSetActiveHandle).not.toHaveBeenCalled();
+    expect(mockSetActiveWallet).not.toHaveBeenCalled();
   });
 
   it('inline provisional: returns the verified vault without active-handle or roster writes', async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce({ ok: true, json: async () => challengeResp })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ ...tokensResp, vault: fullVault }) });
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ ...tokensResp, vault: fullVault, walletIdentityProof }),
+      });
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await passkeyLogin({ transport: 'inline', walletStore: 'provisional' });
 
     expect(result.vault).toEqual(fullVault);
-    expect(mockSetActiveHandle).not.toHaveBeenCalled();
+    expect(mockSetActiveWallet).not.toHaveBeenCalled();
   });
 
   it('popup: persists the active handle from the popup vault result', async () => {
-    mockPopup.mockResolvedValueOnce({ session: tokensResp, vault: fullVault });
+    mockPopup.mockResolvedValueOnce({ session: tokensResp, vault: fullVault, walletIdentityProof });
 
     const result = await passkeyLogin({
       transport: 'popup',
@@ -238,19 +269,23 @@ describe('passkeyLogin — active-handle persistence', () => {
       connectHost: undefined,
     });
     expect(result.vault).toEqual(fullVault);
-    expect(mockSetActiveHandle).toHaveBeenCalledWith('u-handle', undefined, 'c-id');
+    expect(mockSetActiveWallet).toHaveBeenCalledWith(
+      expect.objectContaining({ handle: 'u-handle', credentialId: 'c-id' }),
+    );
   });
 
-  it('popup: does NOT persist when the popup result has no vault', async () => {
-    mockPopup.mockResolvedValueOnce({ session: tokensResp });
+  it('popup: rejects a malformed result with no vault and does not persist', async () => {
+    mockPopup.mockResolvedValueOnce({ session: tokensResp, walletIdentityProof } as never);
 
-    await passkeyLogin({ transport: 'popup' });
+    await expect(passkeyLogin({ transport: 'popup' })).rejects.toMatchObject({
+      code: 'passkey_login_vault_missing',
+    });
 
-    expect(mockSetActiveHandle).not.toHaveBeenCalled();
+    expect(mockSetActiveWallet).not.toHaveBeenCalled();
   });
 
   it('popup provisional: requests provisional host behavior and does not commit on the caller', async () => {
-    mockPopup.mockResolvedValueOnce({ session: tokensResp, vault: fullVault });
+    mockPopup.mockResolvedValueOnce({ session: tokensResp, vault: fullVault, walletIdentityProof });
 
     const result = await passkeyLogin({
       transport: 'popup',
@@ -262,7 +297,7 @@ describe('passkeyLogin — active-handle persistence', () => {
       walletStore: 'provisional',
     });
     expect(result.vault).toEqual(fullVault);
-    expect(mockSetActiveHandle).not.toHaveBeenCalled();
+    expect(mockSetActiveWallet).not.toHaveBeenCalled();
   });
 
   it('popup: does NOT persist when the ceremony is rejected', async () => {
@@ -271,7 +306,7 @@ describe('passkeyLogin — active-handle persistence', () => {
     await expect(passkeyLogin({ transport: 'popup' })).rejects.toMatchObject({
       code: 'popup_closed',
     });
-    expect(mockSetActiveHandle).not.toHaveBeenCalled();
+    expect(mockSetActiveWallet).not.toHaveBeenCalled();
   });
 });
 
@@ -287,6 +322,7 @@ describe('continueWithDexter — popup persistence', () => {
       handle: 'new-handle',
       credentialId: 'new-cred',
       vault: { ...fullVault, userHandle: 'new-handle', credentialId: 'new-cred' },
+      walletIdentityProof,
     });
 
     const result = await continueWithDexter({ transport: 'popup', name: 'My Wallet' });
@@ -295,8 +331,11 @@ describe('continueWithDexter — popup persistence', () => {
     expect(mockPopup).toHaveBeenCalledWith('continue', {
       connectHost: undefined,
       name: 'My Wallet',
+      agentDelegation: 'deferred',
     });
-    expect(mockSetActiveHandle).toHaveBeenCalledWith('new-handle', 'My Wallet', 'new-cred');
+    expect(mockSetActiveWallet).toHaveBeenCalledWith(
+      expect.objectContaining({ handle: 'new-handle', credentialId: 'new-cred' }),
+    );
   });
 
   it('popup owner-only continue carries explicit deferred agent setup', async () => {
@@ -305,6 +344,7 @@ describe('continueWithDexter — popup persistence', () => {
       handle: 'new-handle',
       credentialId: 'new-cred',
       vault: { ...fullVault, userHandle: 'new-handle', credentialId: 'new-cred' },
+      walletIdentityProof,
     });
 
     await continueWithDexter({
@@ -329,6 +369,7 @@ describe('continueWithDexter — popup persistence', () => {
         credentialId: 'new-cred',
         vault: { ...fullVault, userHandle: 'new-handle', credentialId: 'new-cred' },
         label: 'Created Wallet',
+        walletIdentityProof,
       },
     ],
     [
@@ -337,6 +378,7 @@ describe('continueWithDexter — popup persistence', () => {
         kind: 'signin' as const,
         session: tokensResp,
         vault: { ...fullVault, userHandle: 'signin-handle', credentialId: 'signin-cred' },
+        walletIdentityProof,
       },
     ],
   ])('popup provisional %s: propagates exact mode and performs zero caller writes', async (_kind, popupResult) => {
@@ -353,8 +395,9 @@ describe('continueWithDexter — popup persistence', () => {
       connectHost: undefined,
       name: 'My Wallet',
       walletStore: 'provisional',
+      agentDelegation: 'deferred',
     });
-    expect(mockSetActiveHandle).not.toHaveBeenCalled();
+    expect(mockSetActiveWallet).not.toHaveBeenCalled();
   });
 
   it('popup signin: persists guarded on the vault userHandle', async () => {
@@ -362,19 +405,28 @@ describe('continueWithDexter — popup persistence', () => {
       kind: 'signin',
       session: tokensResp,
       vault: { ...fullVault, userHandle: 'signin-handle', credentialId: 'signin-cred' },
+      walletIdentityProof,
     });
 
     await continueWithDexter({ transport: 'popup' });
 
-    expect(mockSetActiveHandle).toHaveBeenCalledWith('signin-handle', undefined, 'signin-cred');
+    expect(mockSetActiveWallet).toHaveBeenCalledWith(
+      expect.objectContaining({ handle: 'signin-handle', credentialId: 'signin-cred' }),
+    );
   });
 
-  it('popup signin without a vault: does NOT persist', async () => {
-    mockPopup.mockResolvedValueOnce({ kind: 'signin', session: tokensResp });
+  it('popup signin without a vault is rejected and does not persist', async () => {
+    mockPopup.mockResolvedValueOnce({
+      kind: 'signin',
+      session: tokensResp,
+      walletIdentityProof,
+    } as never);
 
-    await continueWithDexter({ transport: 'popup' });
+    await expect(continueWithDexter({ transport: 'popup' })).rejects.toMatchObject({
+      code: 'passkey_login_vault_missing',
+    });
 
-    expect(mockSetActiveHandle).not.toHaveBeenCalled();
+    expect(mockSetActiveWallet).not.toHaveBeenCalled();
   });
 
   it('popup: does NOT persist when the ceremony is rejected', async () => {
@@ -383,7 +435,7 @@ describe('continueWithDexter — popup persistence', () => {
     await expect(continueWithDexter({ transport: 'popup' })).rejects.toMatchObject({
       code: 'popup_closed',
     });
-    expect(mockSetActiveHandle).not.toHaveBeenCalled();
+    expect(mockSetActiveWallet).not.toHaveBeenCalled();
   });
 
   it('rejects a hostile API base before opening the hosted consent window', async () => {
@@ -391,7 +443,7 @@ describe('continueWithDexter — popup persistence', () => {
       continueWithDexter({ transport: 'popup', apiBase: 'https://attacker.example' }),
     ).rejects.toMatchObject({ code: 'untrusted_api_base' });
     expect(mockPopup).not.toHaveBeenCalled();
-    expect(mockSetActiveHandle).not.toHaveBeenCalled();
+    expect(mockSetActiveWallet).not.toHaveBeenCalled();
   });
 
   it('rejects an adjacent wallet-store mode before popup, fetch, WebAuthn, or wallet reads', async () => {
@@ -409,7 +461,7 @@ describe('continueWithDexter — popup persistence', () => {
     expect(mockStartAuth).not.toHaveBeenCalled();
     expect(mockImmSupported).not.toHaveBeenCalled();
     expect(mockGetHandle).not.toHaveBeenCalled();
-    expect(mockSetActiveHandle).not.toHaveBeenCalled();
+    expect(mockSetActiveWallet).not.toHaveBeenCalled();
   });
 
   it('rejects conflicting deferred agent setup before popup, fetch, WebAuthn, or wallet reads', async () => {
@@ -473,14 +525,19 @@ describe('continueWithDexter — keychain-first inline decisions', () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce({ ok: true, json: async () => challengeResp })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ ...tokensResp, vault: vaultWithLabel }) });
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ ...tokensResp, vault: vaultWithLabel, walletIdentityProof }),
+      });
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await continueWithDexter({ transport: 'inline' });
 
     expect(result.kind).toBe('signin');
     expect(mockCreate).not.toHaveBeenCalled();
-    expect(mockSetActiveHandle).toHaveBeenCalledWith('u-handle', 'voice test', 'c-id');
+    expect(mockSetActiveWallet).toHaveBeenCalledWith(
+      expect.objectContaining({ handle: 'u-handle', label: 'voice test', credentialId: 'c-id' }),
+    );
   });
 
   it('immediate probe provisional sign-in returns the vault with zero store writes', async () => {
@@ -490,7 +547,10 @@ describe('continueWithDexter — keychain-first inline decisions', () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce({ ok: true, json: async () => challengeResp })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ ...tokensResp, vault: vaultWithLabel }) });
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ ...tokensResp, vault: vaultWithLabel, walletIdentityProof }),
+      });
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await continueWithDexter({
@@ -500,7 +560,7 @@ describe('continueWithDexter — keychain-first inline decisions', () => {
 
     expect(result.kind).toBe('signin');
     expect(mockCreate).not.toHaveBeenCalled();
-    expect(mockSetActiveHandle).not.toHaveBeenCalled();
+    expect(mockSetActiveWallet).not.toHaveBeenCalled();
   });
 
   it('immediate fast-fail without an authored spendPolicy → needs_create (no consent, no birth)', async () => {
@@ -525,6 +585,7 @@ describe('continueWithDexter — keychain-first inline decisions', () => {
       credentialId: 'new-c',
       vault: { ...fullVault, walletLabel: 'Cattle Rider' },
       label: 'Cattle Rider',
+      walletIdentityProof,
     });
     const fetchMock = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => challengeResp });
     vi.stubGlobal('fetch', fetchMock);
@@ -549,6 +610,7 @@ describe('continueWithDexter — keychain-first inline decisions', () => {
       credentialId: 'new-c',
       vault: { ...fullVault, walletLabel: 'fresh' },
       label: 'fresh',
+      walletIdentityProof,
     });
     const fetchMock = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => challengeResp });
     vi.stubGlobal('fetch', fetchMock);
@@ -571,6 +633,7 @@ describe('continueWithDexter — keychain-first inline decisions', () => {
       credentialId: 'new-c',
       vault: { ...fullVault, walletLabel: 'fresh' },
       label: 'fresh',
+      walletIdentityProof,
     });
     const fetchMock = vi.fn().mockResolvedValueOnce({ ok: true, json: async () => challengeResp });
     vi.stubGlobal('fetch', fetchMock);
@@ -584,7 +647,7 @@ describe('continueWithDexter — keychain-first inline decisions', () => {
 
     expect(result.kind).toBe('create');
     expect(mockCreate).toHaveBeenCalledWith({ ...config, onPhase: undefined });
-    expect(mockSetActiveHandle).not.toHaveBeenCalled();
+    expect(mockSetActiveWallet).not.toHaveBeenCalled();
   });
 
   it('no immediate support + a local handle → modal sign-in (passkey lived here)', async () => {
@@ -595,7 +658,10 @@ describe('continueWithDexter — keychain-first inline decisions', () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce({ ok: true, json: async () => challengeResp })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ ...tokensResp, vault: vaultWithLabel }) });
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ ...tokensResp, vault: vaultWithLabel, walletIdentityProof }),
+      });
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await continueWithDexter({ transport: 'inline' });
@@ -612,7 +678,10 @@ describe('continueWithDexter — keychain-first inline decisions', () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce({ ok: true, json: async () => challengeResp })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ ...tokensResp, vault: vaultWithLabel }) });
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ ...tokensResp, vault: vaultWithLabel, walletIdentityProof }),
+      });
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await continueWithDexter({
@@ -622,7 +691,7 @@ describe('continueWithDexter — keychain-first inline decisions', () => {
 
     expect(result.kind).toBe('signin');
     expect(mockCreate).not.toHaveBeenCalled();
-    expect(mockSetActiveHandle).not.toHaveBeenCalled();
+    expect(mockSetActiveWallet).not.toHaveBeenCalled();
   });
 
   it('no immediate support + no local handle → needs_choice, never guess-create', async () => {

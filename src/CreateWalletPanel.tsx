@@ -14,8 +14,8 @@ import {
 } from './types';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CreateWalletPanel — the turnkey wallet-create surface. Configure-now doors
-// collect name + allowance here; deferred doors create owner-only. Off-origin
+// CreateWalletPanel: the turnkey wallet-create surface. The default creates
+// the owner's wallet. Explicit configure-now doors collect an allowance. Off-origin
 // ceremonies continue into the hosted Dexter window, which is the sole place
 // that collects the applicable values; the outer page never displays a choice
 // that the popup would discard or duplicate.
@@ -33,8 +33,8 @@ export interface CreateWalletPanelProps {
   /** Render the optional "Name your wallet" field. Default true. */
   showName?: boolean;
   /**
-   * `deferred` creates an owner-only wallet and omits the agent-allowance UI.
-   * Default `configure-now` preserves the historical creation flow.
+   * `deferred` is the default and omits the agent-allowance UI.
+   * `configure-now` is the explicit compatibility flow for an allowance.
    */
   agentDelegation?: AgentDelegationMode;
   /** Extra className composed after the brand classes. */
@@ -52,7 +52,7 @@ export function CreateWalletPanel(props: CreateWalletPanelProps): ReactElement {
     apiBase,
     transport,
     showName = true,
-    agentDelegation = 'configure-now',
+    agentDelegation = 'deferred',
     className,
   } = props;
   useEffect(ensureConsentStyles, []);
@@ -81,6 +81,19 @@ export function CreateWalletPanel(props: CreateWalletPanelProps): ReactElement {
       ? authoredPolicy(value ?? '')
       : null;
   const canContinue = hosted || ownerOnly || Boolean(policy);
+  const statusText = running
+    ? phase
+      ? ceremonyPhaseLabel(phase)
+      : 'Starting your passkey…'
+    : resolvedTransport === 'unknown'
+      ? 'Preparing wallet setup…'
+      : hosted
+        ? 'Wallet setup continues in Dexter Wallet.'
+        : ownerOnly
+          ? ''
+          : policy
+            ? 'Ready to create.'
+            : 'Choose an agent allowance.';
 
   const handleCreate = async (): Promise<void> => {
     // Busy guard: ignore taps while a ceremony is already in flight.
@@ -138,16 +151,12 @@ export function CreateWalletPanel(props: CreateWalletPanelProps): ReactElement {
 
       {hosted ? (
         <p className="dx-cwp__hosted">
-          Dexter will open its secure wallet window. Choose the wallet name
-          {ownerOnly ? '' : ' and agent allowance'} there before your passkey
-          creates anything.
+          {ownerOnly
+            ? 'Finish setup in Dexter Wallet.'
+            : 'Choose a name and agent allowance in Dexter Wallet.'}
         </p>
       ) : resolvedTransport === 'inline' ? (
-        ownerOnly ? (
-          <p className="dx-cwp__fine">
-            No agent can spend from this wallet. You can add agent authority later.
-          </p>
-        ) : (
+        !ownerOnly ? (
           <>
             <div className="dx-cwp__field">
               <span className="dx-cwp__label">What agents may spend automatically, per 30 days</span>
@@ -155,7 +164,7 @@ export function CreateWalletPanel(props: CreateWalletPanelProps): ReactElement {
             </div>
             <p className="dx-cwp__fine">{FINE_PRINT}</p>
           </>
-        )
+        ) : null
       ) : null}
 
       {error && (
@@ -164,23 +173,11 @@ export function CreateWalletPanel(props: CreateWalletPanelProps): ReactElement {
         </div>
       )}
 
-      <p className="dx-cwp__status" role="status" aria-live="polite">
-        {running
-          ? phase
-            ? ceremonyPhaseLabel(phase)
-            : 'Starting your passkey…'
-          : resolvedTransport === 'unknown'
-            ? 'Preparing secure wallet setup…'
-            : hosted
-              ? ownerOnly
-                ? 'Name and passkey confirmation happen in the Dexter window.'
-                : 'Name, allowance, and passkey confirmation happen in the Dexter window.'
-              : ownerOnly
-                ? 'Your passkey will create an owner-only wallet.'
-                : policy
-                  ? 'Allowance selected. Your passkey will create and secure the wallet.'
-                  : 'Choose an allowance to continue.'}
-      </p>
+      {statusText && (
+        <p className="dx-cwp__status" role="status" aria-live="polite">
+          {statusText}
+        </p>
+      )}
 
       <DexterButton
         block

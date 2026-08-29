@@ -25,9 +25,11 @@ import type {
   CeremonyPhase,
   WalletStoreMode,
   AgentDelegationMode,
+  WalletIdentityProof,
 } from './types';
 import {
   ConnectError,
+  parseWalletIdentityProof,
   resolveAgentDelegationMode,
   resolveWalletStoreMode,
 } from './types';
@@ -36,7 +38,7 @@ import type {
   RegistrationResponseJSON,
   PublicKeyCredentialCreationOptionsJSON,
 } from '@simplewebauthn/browser';
-import { setActiveHandle } from './walletStore';
+import { activateConnectVault } from './walletActivation';
 import { shouldUsePopup, openCeremonyPopup } from './popup';
 import { SESSION_TTL_30D } from './policy';
 import type { SpendPolicy } from './policy';
@@ -65,11 +67,10 @@ export interface CreateWalletConfig extends DexterConnectConfig {
    *  (the vault initializes without one; nothing invents a default). */
   spendPolicy?: SpendPolicy;
   /**
-   * When agent authority is configured. Defaults to `configure-now`, which
-   * preserves the existing hosted allowance flow. `deferred` creates an
-   * owner-only wallet without an allowance prompt; the owner can add governed
-   * agent authority later. A deferred creation must not also carry a
-   * `spendPolicy`.
+   * When agent authority is configured. The default, `deferred`, creates the
+   * wallet without an agent allowance. `configure-now` is an explicit
+   * compatibility path for callers that have already collected a
+   * `spendPolicy`. A deferred creation must not also carry a `spendPolicy`.
    */
   agentDelegation?: AgentDelegationMode;
   /** Called as the ceremony progresses, for live "connecting steps" UI:
@@ -88,6 +89,8 @@ export interface CreateWalletResult {
    *  the result so a popup-typed name reaches the OPENER's wallet store —
    *  before 0.23.2 it lived only on the popup origin. null = unnamed. */
   label: string | null;
+  /** Dexter-signed proof used to restore this Wallet's account relationship. */
+  walletIdentityProof: WalletIdentityProof;
 }
 
 /**
@@ -104,7 +107,9 @@ export async function createWallet(
   // Validate before popup, fetch, or WebAuthn. Only the exact public modes are
   // accepted; adjacent strings may not start a wallet-creation ceremony.
   const walletStore = resolveWalletStoreMode(config.walletStore);
-  const agentDelegation = resolveAgentDelegationMode(config.agentDelegation);
+  const agentDelegation = resolveAgentDelegationMode(
+    config.agentDelegation ?? (config.spendPolicy ? 'configure-now' : undefined),
+  );
   const apiBase = resolveDexterApiBase(config.apiBase);
   resolveDexterRpId(config.rpId);
   if (agentDelegation === 'deferred' && config.spendPolicy) {
@@ -116,18 +121,27 @@ export async function createWallet(
   // Hosted-popup transport: on any non-Dexter origin, run the create ceremony in
   // a popup on dexter.cash and get the wallet back (works on any website).
   if (shouldUsePopup(config.transport)) {
-    const result = await openCeremonyPopup<CreateWalletResult>('create', {
+    const popupResult = await openCeremonyPopup<CreateWalletResult>('create', {
       connectHost: config.connectHost,
       name: config.name,
       ...(walletStore === 'provisional' ? { walletStore } : {}),
-      ...(agentDelegation === 'deferred' ? { agentDelegation } : {}),
+      agentDelegation,
     });
+    if (!popupResult?.vault) {
+      throw new ConnectError('wallet_create_vault_missing');
+    }
+    const result: CreateWalletResult = {
+      ...popupResult,
+      walletIdentityProof: parseWalletIdentityProof(
+        popupResult.walletIdentityProof,
+      ),
+    };
     // In commit mode the ceremony ran on dexter.cash (its localStorage), so
     // mirror the returned wallet on THIS caller's origin. In provisional mode
     // neither origin may change its active handle/roster. The result's label
     // wins because the user may have typed it on the hosted page.
     if (walletStore === 'commit') {
-      setActiveHandle(result.handle, result.label ?? config.name, result.credentialId);
+      activateConnectVault(result.vault, result.walletIdentityProof);
     }
     return result;
   }
@@ -167,29 +181,28 @@ export async function createWallet(
     config.name?.trim() || undefined,
   );
 
-  // Commit mode records the canonical store entry: its label matches the
-  // passkey's keychain entry, and credentialId lets eject() auto-prune it.
-  // Provisional mode returns the same completed Vault without this write.
+  const vault: ConnectVault = {
+    vaultPda: init.vaultPda,
+    swigAddress: init.swigStateAddress,
+    // Never substitute the configuration PDA for a missing deposit address.
+    receiveAddress: init.receiveAddress ?? null,
+    usdcAta: null,
+    publicKey: enrolled.publicKey,
+    userHandle: enrolled.userHandle,
+    credentialId: enrolled.credentialId,
+    walletLabel: init.walletLabel ?? config.name?.trim() ?? null,
+  };
+
   if (walletStore === 'commit') {
-    setActiveHandle(enrolled.userHandle, name, enrolled.credentialId);
+    activateConnectVault(vault, enrolled.walletIdentityProof);
   }
 
   return {
     handle: enrolled.userHandle,
     credentialId: enrolled.credentialId,
-    vault: {
-      vaultPda: init.vaultPda,
-      swigAddress: init.swigStateAddress,
-      // FAIL SAFE: never invent a receive address — null until the server returns
-      // one (depositing to the config PDA would strand funds).
-      receiveAddress: init.receiveAddress ?? null,
-      usdcAta: null, // swig not deployed yet (counterfactual pattern)
-      publicKey: enrolled.publicKey,
-      userHandle: enrolled.userHandle,
-      credentialId: enrolled.credentialId,
-      walletLabel: init.walletLabel ?? config.name?.trim() ?? null,
-    },
-    label: init.walletLabel ?? config.name?.trim() ?? null,
+    vault,
+    label: vault.walletLabel ?? null,
+    walletIdentityProof: enrolled.walletIdentityProof,
   };
 }
 
@@ -217,7 +230,12 @@ async function fetchEnrollChallenge(
 async function submitEnrollComplete(
   apiBase: string,
   response: RegistrationResponseJSON,
-): Promise<{ credentialId: string; publicKey: string; userHandle: string }> {
+): Promise<{
+  credentialId: string;
+  publicKey: string;
+  userHandle: string;
+  walletIdentityProof: WalletIdentityProof;
+}> {
   // RegistrationResponseJSON already matches the server's expected credential
   // shape (id/rawId/response.{attestationObject,clientDataJSON,transports}/...).
   const res = await fetch(`${apiBase}/api/passkey-anon/enroll/complete`, {
@@ -226,7 +244,18 @@ async function submitEnrollComplete(
     body: JSON.stringify({ credential: response }),
   });
   if (!res.ok) throw new ConnectError(await readErrorCode(res), `enroll/complete ${res.status}`);
-  return (await res.json()) as { credentialId: string; publicKey: string; userHandle: string };
+  const data = (await res.json()) as {
+    credentialId: string;
+    publicKey: string;
+    userHandle: string;
+    walletIdentityProof?: unknown;
+  };
+  return {
+    credentialId: data.credentialId,
+    publicKey: data.publicKey,
+    userHandle: data.userHandle,
+    walletIdentityProof: parseWalletIdentityProof(data.walletIdentityProof),
+  };
 }
 
 async function initializeVault(

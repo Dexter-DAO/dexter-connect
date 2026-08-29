@@ -10,7 +10,7 @@ import {
 } from './agentSpend';
 
 const passkeyVaultIdentity = {
-  kind: 'passkey-vault' as const,
+  kind: 'wallet_only' as const,
   userHandle: 'server-minted-handle',
 };
 const VAULT = new PublicKey('11111111111111111111111111111111');

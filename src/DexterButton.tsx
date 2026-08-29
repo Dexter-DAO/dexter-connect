@@ -1,7 +1,7 @@
 import { useEffect, type ButtonHTMLAttributes, type ReactElement, type ReactNode } from 'react';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// DexterButton — the ONE branded button. Presentational: the look + every state
+// DexterButton is the one branded button. Presentational: the look + every state
 // (hover / focus / active / disabled / loading), themeable via --dx-* CSS vars,
 // primary/secondary variants. <SignInWithDexter> uses it for sign-in; the wallet
 // create flow uses it for "Create your Dexter Wallet"; any surface wires it to
@@ -25,7 +25,7 @@ const BUTTON_CSS = `
   min-height:48px; padding:11px 22px; border:1px solid color-mix(in srgb,var(--dx-ember,#f26c18) 55%,transparent);
   border-radius:var(--dx-radius,0px);
   background:linear-gradient(135deg,var(--dx-ember,#f26c18),var(--dx-ember-2,#ba3a00));
-  color:var(--dx-fg,#fff4ea); font:inherit; font-weight:600; font-size:.78rem; letter-spacing:.12em;
+  color:var(--dx-fg,#fff4ea); font:inherit; font-weight:600; font-size:.875rem; letter-spacing:.1em;
   text-transform:uppercase; cursor:pointer; -webkit-tap-highlight-color:transparent;
   box-shadow:0 14px 26px color-mix(in srgb,var(--dx-ember,#f26c18) 24%,transparent);
   transition:transform .16s ease, box-shadow .16s ease, filter .16s ease, background .16s ease;
@@ -65,7 +65,7 @@ const BUTTON_CSS = `
 .dx-btn--sm:hover{ box-shadow:0 12px 22px color-mix(in srgb,var(--dx-ember,#f26c18) 26%,transparent); }
 .dx-btn--sm .dx-btn__mark{ width:14px; height:14px; }
 .dx-btn--sm .dx-btn__spin{ width:12px; height:12px; }
-.dx-btn__mark{ flex-shrink:0; }
+.dx-btn__mark{ width:20px; height:20px; flex-shrink:0; }
 .dx-btn__spin{ width:15px; height:15px; flex-shrink:0; border-radius:50%;
   border:2px solid color-mix(in srgb,currentColor 30%,transparent); border-top-color:currentColor;
   animation:dx-spin .7s linear infinite; }
@@ -101,7 +101,7 @@ export function cx(...parts: Array<string | false | undefined>): string {
   return parts.filter(Boolean).join(' ');
 }
 
-/** The Dexter passkey mark — the brand glyph carried on the branded button. */
+/** The Dexter passkey mark carried on the branded button. */
 export function DexterMark(): ReactElement {
   return (
     <svg
@@ -134,7 +134,7 @@ export interface DexterButtonProps
   block?: boolean;
   /** 'md' (default) = the standard CTA. 'sm' = the mini header/chip-row
    *  variant: tighter padding, smaller type and mark. Same states, same
-   *  theming — never hand-shrink the md button with a className. */
+   *  theming. Never hand-shrink the md button with a className. */
   size?: 'md' | 'sm';
   /** Render the Dexter mark before the children. Default true. */
   withMark?: boolean;

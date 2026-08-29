@@ -9,11 +9,19 @@ export interface PasskeyLoginTokens {
   tokenType: string;
 }
 
+/** Dexter-signed Wallet identity proof returned by a completed passkey ceremony. */
+export interface WalletIdentityProof {
+  token: string;
+  tokenType: 'Bearer';
+  /** Epoch seconds. */
+  expiresAt: number;
+  /** Lifetime in seconds. */
+  expiresIn: number;
+}
+
 /**
- * Vault identity, returned ALONGSIDE the session by passkey-login once
- * vault-review ships the dexter-api change (ASK 1). Optional until then —
- * the connector degrades to session-only. Consumers that open x402 tabs
- * (dexter-agents) need `vaultPda` + `publicKey` to build a passkey signer.
+ * Wallet identity returned alongside the account session by passkey login.
+ * `vaultPda` and `publicKey` are required by the passkey signer.
  */
 export interface ConnectVault {
   vaultPda: string;
@@ -38,8 +46,8 @@ export interface ConnectVault {
 /** Result of a completed "Sign in with Dexter" ceremony. */
 export interface SignInResult {
   session: PasskeyLoginTokens;
-  /** Present once vault-review ships the vault-in-login change. */
-  vault?: ConnectVault;
+  vault: ConnectVault;
+  walletIdentityProof: WalletIdentityProof;
 }
 
 /**
@@ -54,9 +62,9 @@ export type CeremonyPhase = 'challenge' | 'passkey' | 'verifying' | 'finalizing'
  * browser's active-wallet store.
  *
  * `commit` preserves the historical SDK behavior. `provisional` returns the
- * verified session/vault without writing either the active handle or wallet
- * roster, so a caller can finish an account-level approval first and then
- * explicitly commit the approved wallet with `setActiveHandle`.
+ * verified session and Wallet without changing the browser's active Wallet.
+ * The canonical identity transition uses it until the exact Wallet/account
+ * pair has been verified.
  */
 export type WalletStoreMode = 'commit' | 'provisional';
 
@@ -64,9 +72,9 @@ export type WalletStoreMode = 'commit' | 'provisional';
  * Controls whether wallet creation also asks the owner to configure an agent
  * spending allowance.
  *
- * `configure-now` preserves the historical consent-at-birth flow. `deferred`
- * creates an owner-only wallet and leaves agent authority unconfigured until
- * the owner explicitly adds it later.
+ * `deferred` creates the wallet for its owner. `configure-now` is the explicit
+ * compatibility path for a caller that has already collected an agent
+ * spending allowance.
  */
 export type AgentDelegationMode = 'configure-now' | 'deferred';
 
@@ -103,8 +111,7 @@ export interface HostedSignResult {
  * Vault identity on the wallet-only recover leg, as reported by
  * /api/passkey-vault-anon/status. Narrower than ConnectVault on purpose —
  * the status endpoint carries no publicKey/usdcAta, so a recover cannot
- * construct a passkey signer; it re-points this browser at the wallet and
- * lets useIdentity/useDexterWallet light the UI.
+ * construct a passkey signer; it only restores the browser Wallet candidate.
  */
 export interface RecoverVault {
   vaultPda: string;
@@ -125,7 +132,13 @@ export interface RecoverVault {
  * server has no row for).
  */
 export type RecoverOutcome =
-  | { ok: true; userHandle: string; credentialId: string; vault: RecoverVault }
+  | {
+      ok: true;
+      userHandle: string;
+      credentialId: string;
+      vault: RecoverVault;
+      walletIdentityProof: WalletIdentityProof;
+    }
   | { ok: false; reason: 'no_credential' | 'cancelled' | 'error'; error?: ConnectError };
 
 export interface RecoverWalletConfig extends DexterConnectConfig {
@@ -181,8 +194,8 @@ export function resolveWalletStoreMode(mode: unknown): WalletStoreMode {
 
 /** Runtime guard for JavaScript callers and hosted-popup query parsing. */
 export function resolveAgentDelegationMode(mode: unknown): AgentDelegationMode {
-  if (mode === undefined || mode === 'configure-now') return 'configure-now';
-  if (mode === 'deferred') return 'deferred';
+  if (mode === undefined || mode === 'deferred') return 'deferred';
+  if (mode === 'configure-now') return 'configure-now';
   throw new ConnectError(
     'invalid_agent_delegation_mode',
     'agentDelegation must be exactly configure-now or deferred',
@@ -197,4 +210,32 @@ export class ConnectError extends Error {
     this.code = code;
     this.name = 'ConnectError';
   }
+}
+
+/** Validate the Wallet identity proof carried by Dexter API ceremony responses. */
+export function parseWalletIdentityProof(value: unknown): WalletIdentityProof {
+  if (!value || typeof value !== 'object') {
+    throw new ConnectError('wallet_identity_proof_malformed');
+  }
+  const proof = value as Record<string, unknown>;
+  if (
+    typeof proof.token !== 'string' ||
+    proof.token.length === 0 ||
+    /\s/.test(proof.token) ||
+    proof.tokenType !== 'Bearer' ||
+    typeof proof.expiresAt !== 'number' ||
+    !Number.isFinite(proof.expiresAt) ||
+    proof.expiresAt <= 0 ||
+    typeof proof.expiresIn !== 'number' ||
+    !Number.isFinite(proof.expiresIn) ||
+    proof.expiresIn <= 0
+  ) {
+    throw new ConnectError('wallet_identity_proof_malformed');
+  }
+  return {
+    token: proof.token,
+    tokenType: 'Bearer',
+    expiresAt: proof.expiresAt,
+    expiresIn: proof.expiresIn,
+  };
 }

@@ -23,6 +23,7 @@ import { startAuthentication } from '@simplewebauthn/browser';
 import { SignInWithDexter } from './SignInWithDexter';
 import { useSignInWithDexter } from './useSignInWithDexter';
 import { getActiveHandle, listWallets, ACTIVE_WALLET_STORAGE_KEY } from './walletStore';
+import { WALLET_PROOF_SESSION_STORAGE_PREFIX } from './walletProofSession';
 import type { SignInResult } from './types';
 import { render, click } from './testRender';
 
@@ -50,6 +51,13 @@ const authResponse = {
   type: 'public-key',
 } as unknown as Awaited<ReturnType<typeof startAuthentication>>;
 
+const walletIdentityProof = {
+  token: 'wallet-proof',
+  tokenType: 'Bearer' as const,
+  expiresAt: 2_000_000_000,
+  expiresIn: 2_592_000,
+};
+
 /** fetch mock: /login-challenge then /passkey-login (with a vault in the payload). */
 function stubLoginFetchWithVault(vault: unknown = fullVault): void {
   const fetchMock = vi
@@ -64,6 +72,7 @@ function stubLoginFetchWithVault(vault: unknown = fullVault): void {
         expiresIn: 1,
         tokenType: 'bearer',
         vault,
+        walletIdentityProof,
       }),
     });
   vi.stubGlobal('fetch', fetchMock);
@@ -114,6 +123,11 @@ describe('SignInWithDexter — active-handle persistence', () => {
     expect(listWallets().map((w) => w.handle)).toContain('handle-xyz');
     // credentialId carried through for later Signal-API prune on eject.
     expect(listWallets().find((w) => w.handle === 'handle-xyz')?.credentialId).toBe('cred-abc');
+    expect(
+      window.localStorage.getItem(
+        `${WALLET_PROOF_SESSION_STORAGE_PREFIX}handle-xyz`,
+      ),
+    ).not.toBeNull();
   });
 
   it('does NOT persist a handle when the ceremony rejects (hook surface)', async () => {

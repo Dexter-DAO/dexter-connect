@@ -18,6 +18,7 @@ import { startAuthentication } from '@simplewebauthn/browser';
 import { SignInWithDexter } from './SignInWithDexter';
 import { useSignInWithDexter } from './useSignInWithDexter';
 import { getActiveHandle, listWallets, ACTIVE_WALLET_STORAGE_KEY } from './walletStore';
+import { WALLET_PROOF_SESSION_STORAGE_PREFIX } from './walletProofSession';
 import type { RecoverOutcome } from './types';
 import { render, click } from './testRender';
 
@@ -35,6 +36,13 @@ const authResponse = {
   type: 'public-key',
 } as unknown as Awaited<ReturnType<typeof startAuthentication>>;
 
+const walletIdentityProof = {
+  token: 'wallet-proof',
+  tokenType: 'Bearer' as const,
+  expiresAt: 2_000_000_000,
+  expiresIn: 2_592_000,
+};
+
 /** fetch mock: recover-challenge → recover-verify → vault status. */
 function stubRecoverFetch(): void {
   const fetchMock = vi
@@ -42,7 +50,12 @@ function stubRecoverFetch(): void {
     .mockResolvedValueOnce({ ok: true, json: async () => ({ options: { challenge: 'ch' } }) })
     .mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ verified: true, credentialId: 'cred-abc', userHandle: 'handle-xyz' }),
+      json: async () => ({
+        verified: true,
+        credentialId: 'cred-abc',
+        userHandle: 'handle-xyz',
+        walletIdentityProof,
+      }),
     })
     .mockResolvedValueOnce({
       ok: true,
@@ -98,6 +111,11 @@ describe('SignInWithDexter mode="recover"', () => {
     const row = listWallets().find((w) => w.handle === 'handle-xyz');
     expect(row?.credentialId).toBe('cred-abc');
     expect(row?.label).toBe('BranchWallet');
+    expect(
+      window.localStorage.getItem(
+        `${WALLET_PROOF_SESSION_STORAGE_PREFIX}handle-xyz`,
+      ),
+    ).not.toBeNull();
     // Wallet-only: the component disappears after success — identity display
     // belongs to DexterWalletChip/useIdentity, and no session exists anywhere.
     expect(container.querySelector('button')).toBeNull();

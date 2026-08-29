@@ -80,7 +80,7 @@ class HostedPopupPasskeySigner implements PasskeySignerWithPublicKey {
  * `vault.publicKey` is base64 (33-byte SEC1 compressed P-256); `vault.userHandle`
  * is base64url (server-minted). Both are decoded to the Uint8Arrays the SDK wants.
  *
- * @param vault    the connected vault from useSignInWithDexter()
+ * @param vault    the Wallet returned by a verified Dexter ceremony
  * @param apiBase  compatibility-only; omitted or exactly https://api.dexter.cash
  * @param opts.__assertion  test-only injected assertion (skips real WebAuthn)
  */

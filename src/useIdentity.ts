@@ -1,35 +1,30 @@
-// useIdentity — the React binding for the identity resolver.
-//
-// Combines the connect wallet store (the passkey handle, via useDexterWallet)
-// with the account token the CONSUMER passes in — the SDK is auth-agnostic, so it
-// never imports a consumer's auth context. Returns the canonical ResolvedIdentity
-// so every surface (header chip, wallet menu, …) reads ONE "who is active".
-//
-// Carries NO server/chain facts (balance, activation, claimed). Those stay
-// server-authoritative in the consumer.
+// useIdentity: React presentation over a verified relation snapshot.
 
 import { useMemo } from 'react';
 
 import { useDexterWallet } from './useDexterWallet';
 import { resolveIdentity, type ResolvedIdentity } from './identity';
+import type { WalletAccountRelationSnapshot } from './relationController';
 
 export interface UseIdentityConfig {
-  /** The account session token (e.g. a Supabase access_token), or null when the
-   *  user has no account session. The SDK is auth-agnostic — pass your own. */
+  /** Current relation-controller snapshot. */
+  relation: WalletAccountRelationSnapshot;
+  /** Candidate account token. It remains absent from the result until bound. */
   accountToken: string | null;
 }
 
-export function useIdentity({ accountToken }: UseIdentityConfig): ResolvedIdentity {
+export function useIdentity({ relation, accountToken }: UseIdentityConfig): ResolvedIdentity {
   const { activeHandle, activeWallet } = useDexterWallet();
   const walletLabel = activeWallet?.label ?? null;
 
   return useMemo(
     () =>
       resolveIdentity({
+        relation,
         accountToken: accountToken ?? null,
         userHandle: activeHandle ?? null,
         walletLabel,
       }),
-    [accountToken, activeHandle, walletLabel],
+    [relation, accountToken, activeHandle, walletLabel],
   );
 }

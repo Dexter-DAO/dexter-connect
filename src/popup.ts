@@ -98,19 +98,22 @@ export function openCeremonyPopup<T>(
   const requestId = makeNonce();
   const signRequest = snapshotSignRequest(op, config.signRequest);
   const walletStore = resolveWalletStoreMode(config.walletStore);
-  const agentDelegation = resolveAgentDelegationMode(config.agentDelegation);
-  if (agentDelegation === 'deferred' && op !== 'create' && op !== 'continue') {
+  const createsWallet = op === 'create' || op === 'continue';
+  if (!createsWallet && config.agentDelegation !== undefined) {
     throw new ConnectError(
       'unexpected_agent_delegation',
       'agentDelegation applies only to create or continue ceremonies',
     );
   }
+  const agentDelegation = createsWallet
+    ? resolveAgentDelegationMode(config.agentDelegation)
+    : undefined;
 
   const params = new URLSearchParams({ v: '1', op, requestId, origin: openerOrigin });
   if (config.name) params.set('name', config.name);
   if (config.preferImmediate) params.set('preferImmediate', '1');
   if (walletStore === 'provisional') params.set('walletStore', 'provisional');
-  if (agentDelegation === 'deferred') params.set('agentDelegation', 'deferred');
+  if (agentDelegation) params.set('agentDelegation', agentDelegation);
   const url = `${host}?${params.toString()}`;
 
   return new Promise<T>((resolve, reject) => {

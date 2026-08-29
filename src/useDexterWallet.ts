@@ -1,11 +1,9 @@
 'use client';
 
-// @dexterai/connect/react — useDexterWallet
+// @dexterai/connect/react useDexterWallet
 //
-// React binding over the canonical walletStore + the WebAuthn Signal API. Gives
-// a component the active wallet, the roster, eject/switch, AND keychain hygiene:
-// rename the active passkey in the OS manager, and auto-prune the old passkey on
-// eject (where the browser supports it — see ./signals; falls back to no-op).
+// React binding over the canonical Wallet roster and the WebAuthn Signal API.
+// Disconnect, roster removal, and device-passkey removal remain separate.
 
 import { useCallback, useEffect, useState } from 'react';
 
@@ -13,10 +11,14 @@ import {
   getActiveHandle,
   listWallets,
   ejectActiveWallet,
+  disconnectActiveWallet,
+  forgetWallet,
+  removeWalletFromDeviceRoster,
   switchWallet,
   setActiveHandle,
-  getCredentialId,
+  setActiveWallet,
   subscribe,
+  type DeviceWalletRemovalConfirmation,
   type StoredWallet,
 } from './walletStore';
 import {
@@ -25,36 +27,49 @@ import {
   prunePasskey,
   type PasskeySignalSupport,
 } from './signals';
+import { walletProofSessionStore } from './walletProofSession';
 
 const NO_SUPPORT: PasskeySignalSupport = { rename: false, prune: false, syncAccepted: false };
 
+export interface RemoveWalletFromDeviceResult {
+  removedFromRoster: boolean;
+  passkeyPruned: boolean;
+}
+
 export interface UseDexterWallet {
-  /** Active wallet handle, or null if this browser has no active wallet. */
+  /** Active Wallet handle, or null. */
   activeHandle: string | null;
-  /** The active wallet's roster entry (handle + label + credentialId), or
-   *  null. `activeWallet.label` is the wallet's human name — identity is
-   *  first-class, so display surfaces read it here instead of re-fetching. */
+  /** Active Wallet roster row, or null. */
   activeWallet: StoredWallet | null;
-  /** Known wallets on this browser, most-recently-used first. */
+  /** Known Wallets on this browser, most recently used first. */
   wallets: StoredWallet[];
-  /** What the WebAuthn Signal API supports in THIS browser (rename / prune). */
+  /** WebAuthn Signal API support in the current browser. */
   support: PasskeySignalSupport;
+  /** Leave the active Wallet while keeping its roster row and device passkey. */
+  disconnect: () => boolean;
+  /** Remove a Wallet from the browser roster while keeping its device passkey. */
+  forget: (handle: string) => void;
   /**
-   * Eject the active wallet — "switch / start fresh". Clears the local binding
-   * and, where supported, prunes the old passkey from the OS manager so it
-   * disappears from the user's list. `{ forget: true }` also drops it from the
-   * roster.
+   * Deprecated compatibility alias. The default disconnects. `forget: true`
+   * removes the roster row. Neither form removes an OS passkey.
    */
   eject: (opts?: { forget?: boolean }) => void;
-  /** Switch the active wallet to a known handle. No-op if unknown. */
-  switchTo: (handle: string) => boolean;
-  /** Record/activate a handle (after enroll or recover). Prefer over writing
-   *  localStorage by hand so the roster + subscribers stay correct. */
-  setActive: (handle: string, label?: string, credentialId?: string) => void;
   /**
-   * Rename the ACTIVE passkey in the OS keychain (post-creation). Returns true
-   * if the browser supported it and the signal fired; false otherwise (the
-   * keychain entry is then just left as-is).
+   * Remove a Wallet from this device. The confirmation literal is required;
+   * this is the only hook action that may prune an OS passkey.
+   */
+  removeFromDevice: (
+    handle: string,
+    confirmation: DeviceWalletRemovalConfirmation,
+  ) => Promise<RemoveWalletFromDeviceResult>;
+  /** Switch the active Wallet to a known handle. */
+  switchTo: (handle: string) => boolean;
+  /** Backward-compatible handle activation helper. */
+  setActive: (handle: string, label?: string, credentialId?: string) => void;
+  /** Activate a Wallet while retaining all server-returned roster facts. */
+  activate: (wallet: StoredWallet) => boolean;
+  /**
+   * Rename the active passkey. Returns false when unsupported or unsuccessful.
    */
   rename: (name: string, displayName?: string) => Promise<boolean>;
 }
@@ -62,7 +77,7 @@ export interface UseDexterWallet {
 export function useDexterWallet(): UseDexterWallet {
   const [activeHandle, setHandle] = useState<string | null>(() => getActiveHandle());
   const [wallets, setWallets] = useState<StoredWallet[]>(() => listWallets());
-  // Detected in the effect (not the initial render) to avoid SSR/hydration skew.
+  // Detect after hydration so the server and initial client render match.
   const [support, setSupport] = useState<PasskeySignalSupport>(NO_SUPPORT);
 
   useEffect(() => {
@@ -75,35 +90,59 @@ export function useDexterWallet(): UseDexterWallet {
     return subscribe(sync);
   }, []);
 
-  const eject = useCallback((opts?: { forget?: boolean }) => {
-    // Capture the credentialId BEFORE clearing so we can prune that passkey from
-    // the OS manager (where supported) — the welded-old-wallet auto-cleanup.
-    const handle = getActiveHandle();
-    const credentialId = handle ? getCredentialId(handle) : undefined;
-    ejectActiveWallet(opts);
-    if (credentialId) void prunePasskey({ credentialId });
-  }, []);
+  const disconnect = useCallback(() => disconnectActiveWallet(), []);
+
+  const forget = useCallback((handle: string) => forgetWallet(handle), []);
+
+  const eject = useCallback((opts?: { forget?: boolean }) => ejectActiveWallet(opts), []);
+
+  const removeFromDevice = useCallback(
+    async (
+      handle: string,
+      confirmation: DeviceWalletRemovalConfirmation,
+    ): Promise<RemoveWalletFromDeviceResult> => {
+      const removed = removeWalletFromDeviceRoster(handle, confirmation);
+      if (!removed) return { removedFromRoster: false, passkeyPruned: false };
+      walletProofSessionStore.handleLifecycle({
+        type: 'wallet_removed_from_device',
+        handle,
+      });
+      const passkeyPruned = removed.credentialId
+        ? await prunePasskey({ credentialId: removed.credentialId })
+        : false;
+      return { removedFromRoster: true, passkeyPruned };
+    },
+    [],
+  );
 
   const rename = useCallback(async (name: string, displayName?: string): Promise<boolean> => {
     const handle = getActiveHandle();
     if (!handle) return false;
     const ok = await renamePasskey({ userId: handle, name, displayName });
-    if (ok) setActiveHandle(handle, name); // reflect the new label in our roster too
+    if (ok) setActiveHandle(handle, name);
     return ok;
   }, []);
+
+  const switchTo = useCallback((handle: string) => switchWallet(handle), []);
+  const setActive = useCallback(
+    (handle: string, label?: string, credentialId?: string) =>
+      setActiveHandle(handle, label, credentialId),
+    [],
+  );
+  const activate = useCallback((wallet: StoredWallet) => setActiveWallet(wallet), []);
 
   return {
     activeHandle,
     activeWallet: activeHandle ? wallets.find((w) => w.handle === activeHandle) ?? null : null,
     wallets,
     support,
+    disconnect,
+    forget,
     eject,
-    switchTo: useCallback((handle: string) => switchWallet(handle), []),
-    setActive: useCallback(
-      (handle: string, label?: string, credentialId?: string) =>
-        setActiveHandle(handle, label, credentialId),
-      [],
-    ),
+    removeFromDevice,
+    switchTo,
+    setActive,
+    activate,
     rename,
   };
 }

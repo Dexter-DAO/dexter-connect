@@ -5,7 +5,7 @@
 <h1 align="center">@dexterai/connect</h1>
 
 <p align="center">
-  <strong>Connect any app or agent to a Dexter Wallet. One passkey anchors the wallet, the owner session, and persistent agent authority across runtimes.</strong>
+  <strong>Add Dexter identity, Wallet access, or governed agent authority to a web app.</strong>
 </p>
 
 <p align="center">
@@ -14,26 +14,19 @@
   <a href="https://www.w3.org/TR/webauthn-2/"><img src="https://img.shields.io/badge/auth-passkey-00FF88" alt="Passkey"></a>
 </p>
 
----
+## One Dexter identity
 
-## What this is
+Each signed-in person has one active Dexter identity and one canonical Dexter
+Wallet. A full connection returns the Wallet and account session from the same
+passkey ceremony. Connect asks the Dexter API to verify that exact pair before
+the app receives account-owned data or actions.
 
-A `<SignInWithDexter/>` button returns an application session and a
-**Dexter Wallet**. The same package creates and recovers wallets, signs exact
-wallet operations in a Dexter-hosted window, installs OpenDexter in agent
-runtimes, grants an agent persistent payment or trading authority, reports
-remaining capacity, and verifies sessions on the server. The owner keeps the
-root passkey. Agents receive narrower, revocable grants. Composes
-[`@dexterai/vault`](https://www.npmjs.com/package/@dexterai/vault).
+The browser may remember earlier Wallet passkeys for recovery. That roster stays
+inside Connect. The product action is **Use another Dexter Wallet**, which runs a
+fresh passkey ceremony and replaces the active identity only after verification.
 
-Four entry points cover the whole flow:
-
-| Entry point | Runs in | What it gives you |
-|---|---|---|
-| `@dexterai/connect` | browser | wallet lifecycle, hosted signing, persistent agent authority, capacity reads, wallet storage, runtime install actions |
-| `@dexterai/connect/react` | browser | `<SignInWithDexter/>`, the branded wallet kit, hooks |
-| `@dexterai/connect/server` | Node 18+, Workers, Vercel edge | `verifyDexterSession`: offline session verification |
-| `@dexterai/connect/worldid` | browser | `<VerifyPersonhood/>` World ID proof-of-personhood button |
+Agent authority always requires a separate owner grant. Creating or connecting a
+Wallet grants no agent spending authority.
 
 ## Install
 
@@ -41,237 +34,207 @@ Four entry points cover the whole flow:
 npm install @dexterai/connect @dexterai/vault react
 ```
 
-`@solana/web3.js` and `@worldcoin/idkit` are optional peers: the first for
-passkey and agent-spend signing, the second only if you use the World ID button.
+`@solana/web3.js` is optional and supports signing paths.
+`@worldcoin/idkit` is optional and supports the World ID entry point.
 
-## Quick start
+## Entry points
+
+| Import | Purpose |
+|---|---|
+| `@dexterai/connect` | Passkey ceremonies, hosted signing, lifecycle operations, and agent authority |
+| `@dexterai/connect/react` | The canonical React control, hooks, and Dexter UI primitives |
+| `@dexterai/connect/server` | Local verification of Dexter account sessions |
+| `@dexterai/connect/worldid` | Optional World ID proof-of-personhood control |
+
+## Canonical React integration
+
+`useDexterConnection` is the controlled integration for a product header,
+account menu, or connection screen. The host owns its account-session storage.
+Connect owns the Wallet ceremony, pair verification, and display permissions.
 
 ```tsx
-import { SignInWithDexter } from '@dexterai/connect/react';
+import { useDexterConnection } from '@dexterai/connect/react';
 
-function Header() {
-  return (
-    <SignInWithDexter
-      onSuccess={({ session, vault }) => {
-        // session = auth tokens (camelCase); vault = the Dexter Wallet
-        seatYourSession(session);
-      }}
-    />
-  );
+function DexterControl({ loading, session }: Props) {
+  const dexter = useDexterConnection({
+    intent: 'wallet',
+    accountSession: loading
+      ? { status: 'loading' }
+      : session
+        ? {
+            status: 'authenticated',
+            accessToken: session.access_token,
+          }
+        : { status: 'signed_out' },
+    installAccountSession: async (next) => {
+      await auth.setSession({
+        access_token: next.accessToken,
+        refresh_token: next.refreshToken,
+      });
+    },
+    clearAccountSession: async () => {
+      await auth.signOut();
+    },
+  });
+
+  if (dexter.model.stage === 'checking') return <Spinner />;
+  if (dexter.model.stage === 'connect') {
+    return <button onClick={() => void dexter.connect()}>Connect Dexter</button>;
+  }
+  if (dexter.model.stage === 'repair') {
+    return <button onClick={() => void dexter.connect()}>Reconnect Dexter</button>;
+  }
+  if (dexter.model.stage === 'offline' || dexter.model.stage === 'error') {
+    return <button onClick={() => void dexter.retry()}>Try again</button>;
+  }
+
+  return <WalletMenu dexter={dexter} />;
 }
 ```
 
-Signed out, it renders a **Sign in with Dexter** button. Connected, it becomes
-the wallet chip: address plus **"$X.XX available."**
+The host callbacks are part of the identity transition:
 
-## Works on any website
+- `installAccountSession` receives the session from the verified ceremony. The
+  callback should resolve only after the host store publishes that exact access
+  token.
+- `clearAccountSession` removes that host session during **Disconnect Dexter**.
+- `accountSession` maps the host store back into `loading`, `signed_out`, or
+  `authenticated` with an access token.
 
-The ceremony is not limited to dexter.cash. On a foreign origin, `passkeyLogin`
-opens a hosted popup on `dexter.cash/connect`, runs the ceremony there, and
-posts the result back to your page. A browser-stamped hello/ack binds the exact
-popup window, hosted origin, caller origin, request nonce, and requested
-operation; the caller-origin may be any HTTPS website and is not allowlisted.
-The default `transport: 'auto'` picks the right mode; `'popup'` and `'inline'`
-force it.
+If account installation fails, Connect restores the previous active Wallet. The
+new identity stays hidden until the host session is installed.
 
-The connected `passkeySigner.signOperation(rawOperation)` follows the same
-cross-origin rule. On an unrelated website it opens the pinned Dexter consent
-window and sends the raw operation plus the selected vault identity only after
-the exact hello/ack handshake. Those bytes are structured-cloned in a
-`sign-request`; they are never put in the URL. The Dexter window displays the
-requesting origin and operation-specific consent before returning the
-on-chain-ready assertion bytes.
+## Integration intents
 
-WebAuthn challenge and verification calls are pinned to
-`https://api.dexter.cash`. The legacy `apiBase` option remains source-compatible
-only for that exact value (an optional trailing slash is normalized); any other
-server fails before a popup, fetch, or authenticator call. `apiBase` is never
-placed in the hosted popup URL. The legacy `connectHost` option is likewise
-compatibility-only and may name only `https://dexter.cash/connect`; this pins
-the credential-handling window without restricting the embedding website.
+Choose one intent for each control.
+
+| Intent | Capabilities requested | Ready state |
+|---|---|---|
+| `identity` | `identity` | Exact Wallet/account pair is bound |
+| `wallet` | `identity`, `wallet.read`, `wallet.use` | Owner Wallet is present; account content still requires `bound` |
+| `agent` | `identity`, `wallet.read`, `agent.authority` | Exact pair is bound; authority is granted in a separate owner flow |
+
+`wallet.use` means the owner can use their own Wallet in the current app.
+`agent.authority` means the app may offer a governed grant for an agent. The two
+permissions are separate.
+
+## Stage and permission model
+
+Render from `dexter.model`, rather than inferring connection from a cached Wallet
+or account token.
+
+| Stage | Product response |
+|---|---|
+| `connect` | Offer the configured Dexter connection action |
+| `checking` | Keep private content closed while the exact pair is verified |
+| `ready` | Render only the fields enabled in `model.permissions` |
+| `repair` | Offer the fresh passkey reconnect path |
+| `offline` | Keep private Wallet and account content closed; offer retry |
+| `error` | Show a concise error and offer retry |
+
+The permission fields are:
+
+| Field | Meaning |
+|---|---|
+| `walletIdentityVisible` | The active Wallet identity may be shown |
+| `walletDataVisible` | Wallet balances and related data may be shown |
+| `ownerWalletUseEnabled` | The owner may use this Wallet in the current app |
+| `accountContentVisible` | The API verified `bound`; account-owned content may be shown |
+| `agentAuthorityVisible` | A bound `agent` integration may present agent-authority controls |
+
+Only `bound` unlocks account profile, roles, credit, servers, or other
+account-owned content. A conflict enters the repair stage with private account
+access closed.
+
+## Lifecycle actions
+
+The canonical control presents three identity actions:
+
+| Action | Effect |
+|---|---|
+| **Use another Dexter Wallet** | Runs a fresh ceremony and keeps the replacement hidden until the API verifies the pair and the host installs the matching account session |
+| **Disconnect Dexter** | Clears the host account session and active Wallet; the passkey remains on the device for a later sign-in |
+| **Remove from this device** | Requires explicit confirmation, removes the local Wallet record, and asks the browser to remove its passkey |
+
+Connect keeps the browser Wallet roster, raw switching methods, and partial
+Wallet/account disconnects inside its recovery plumbing.
+
+## Framework-neutral transition
+
+Apps without React can use the same full transition directly:
 
 ```ts
-import { passkeyLogin } from '@dexterai/connect';
+import {
+  connectDexterIdentity,
+  disconnectDexterIdentity,
+} from '@dexterai/connect';
 
-const { session, vault } = await passkeyLogin({ transport: 'auto' });
-```
-
-By default, a successful sign-in immediately makes its wallet active in the
-browser wallet store, preserving existing behavior. A flow that must finish a
-separate account-level approval can instead keep the result provisional:
-
-```ts
-import { passkeyLogin, setActiveHandle } from '@dexterai/connect';
-
-const result = await passkeyLogin({
+const result = await connectDexterIdentity({
   transport: 'auto',
-  walletStore: 'provisional',
+  installAccountSession: (session) => auth.setSession(session),
 });
 
-// Only after your approval has bound this exact wallet to the account:
-if (result.vault) {
-  setActiveHandle(
-    result.vault.userHandle,
-    result.vault.walletLabel ?? undefined,
-    result.vault.credentialId,
-  );
-}
-```
-
-`provisional` suppresses both active-handle and wallet-roster writes on the
-hosted Dexter origin and the calling origin. It does not weaken passkey
-verification or persist a second identity. `recoverWallet`, `createWallet`, and
-every terminal sign-in/create branch of `continueWithDexter` accept the same
-option. A provisional creation still completes the passkey and Vault ceremony
-and returns the full `CreateWalletResult`; explicitly call
-`setActiveHandle(result.handle, result.label ?? undefined, result.credentialId)`
-only after the separate approval succeeds. The only supported modes are exact
-`commit` and `provisional`; omitted means `commit`.
-
-## Create an owner-only wallet
-
-An app can postpone agent authority and create the wallet with its owner
-passkey only:
-
-```ts
-import { continueWithDexter } from '@dexterai/connect';
-
-const result = await continueWithDexter({
-  agentDelegation: 'deferred',
+await disconnectDexterIdentity({
+  clearAccountSession: () => auth.signOut(),
 });
 ```
 
-The hosted Dexter window omits the agent-allowance step. The initialize request
-contains no spend limit or agent-session TTL. Existing wallets still sign in
-normally, and the owner can add governed agent authority later.
+`connectDexterIdentity` keeps the passkey result provisional, verifies its exact
+Wallet/account relation, then publishes the Wallet and asks the host to install
+the matching account session.
 
-`agentDelegation: 'deferred'` and `spendPolicy` are mutually exclusive. The SDK
-rejects that combination before opening a popup, fetching a challenge, or
-starting WebAuthn. Omitting `agentDelegation` preserves the existing
-`configure-now` flow.
+## Hosted ceremonies
 
-A `kind: 'signin'` continue result includes the verified session. A
-`kind: 'create'` result proves that wallet creation completed but does not mint
-an access session. If your server must bind the new identity immediately, ask
-the user to finish `passkeyLogin()` on a subsequent user action and send only
-that access token to your server for verification.
+On another HTTPS origin, Connect opens the ceremony on `dexter.cash/connect` and
+returns the result to the calling app. The browser handshake binds the popup,
+hosted origin, caller origin, nonce, and requested operation. The hosted window
+also handles consent for Wallet signing.
 
-## Verify the session on your server
+WebAuthn challenge and verification calls use `https://api.dexter.cash`. The
+default `transport: 'auto'` selects inline or popup transport. Integrators can
+force `popup` or `inline` when their environment requires it.
+
+## Server verification
 
 ```ts
 import { createDexterClient } from '@dexterai/connect/server';
 
-const dexter = createDexterClient(); // parameterized on (iss, jwksUrl); defaults to Dexter's issuer
+const dexter = createDexterClient();
 
 export async function handler(req: Request) {
   const auth = await dexter.authenticateRequest(req);
   if (!auth.isSignedIn) return new Response('unauthorized', { status: 401 });
-  if (!auth.userHandle) return new Response('wallet identity required', { status: 403 });
-  auth.userHandle;   // stable Dexter wallet principal from the signed claim
-  auth.vaultAddress; // associated wallet capability, not your user primary key
-  auth.sub;          // signed account subject backing this session
-  auth.claims;       // full verified JWT payload
+  if (!auth.userHandle) {
+    return new Response('wallet identity required', { status: 403 });
+  }
+
+  auth.userHandle;   // stable Dexter Wallet principal
+  auth.vaultAddress; // Wallet capability
+  auth.sub;          // account subject
+  auth.claims;       // verified JWT payload
 }
 ```
 
-Verification is a local ES256 signature check against a cached JWKS. The first
-call fetches the key set; every later call is pure local crypto with zero
-network (measured at ~0.6ms). The algorithm list is pinned to ES256, and
-issuer plus audience are always checked. `verifyDexterSession(token, options)`
-does the same for a bare token string, and `jwtKey` accepts a public JWK for
-fully networkless deployments.
+The server entry verifies ES256 signatures against Dexter's JWKS and checks the
+issuer and audience. `verifyDexterSession` verifies a token directly.
 
-## Hook (full control)
+## Wallet creation and recovery
 
-```tsx
-import { useSignInWithDexter } from '@dexterai/connect/react';
+`createWallet` creates an owner Wallet and passkey. Agent authority remains a
+later, explicit owner action. `recoverWallet` runs a fresh Wallet ceremony for a
+device that already holds a Dexter passkey. Product integrations should route
+full account connection through `useDexterConnection` or
+`connectDexterIdentity`, so the account and Wallet are verified together.
 
-const c = useSignInWithDexter();
-await c.signIn();        // run the passkey ceremony
-c.status;                // idle -> pending -> done -> error
-c.vaultAddress;          // the Dexter Wallet address (base58)
-c.usdcBalance;           // USD available (via Dexter's RPC), or null
-c.disconnect();
-```
+## Agent authority
 
-| Field | What it is |
-|---|---|
-| `signIn()` / `disconnect()` | run the passkey ceremony / clear state |
-| `status` / `isVaultConnected` | `idle->pending->done->error` / connected flag |
-| `session` | auth session tokens (camelCase) |
-| `vaultAddress` / `vaultPda` | the Dexter Wallet address / PDA |
-| `usdcBalance` / `refreshBalance()` | USD available, best-effort via Dexter's RPC |
-| `vault` / `credentialId` / `error` | raw vault payload / credential id / typed error |
+Agent integrations build, present, and stage a separate owner grant. The grant
+can include x402 payment rules or other governed actions. It is bound to the
+selected Wallet and remains revocable.
 
-## The wallet kit
-
-Branded, presentational pieces that share one implementation across every
-Dexter surface, themed with `--dx-*` CSS variables: `DexterButton` (and
-`DexterMark`) for any action that should look like Dexter, `DexterWalletChip`
-as the header trigger, `DexterWalletMenu` for manage / save / start-fresh, and
-the `useDexterWallet` + `useIdentity` hooks to drive them.
-
-## Agent spend
-
-Connect can bind an OAuth or device-code connection to one persistent agent
-and one composable grant. The same grant can carry x402 payment rules and
-additional governed actions. It is staged by the owner, activated when the
-connection token is minted, and read later from the runtime bearer.
-
-```ts
-import {
-  beginAgentAuthority,
-  buildAgentAuthorityRequest,
-  buildX402PaymentRule,
-  noCustomX402Limits,
-  readAgentAuthority,
-  stageAgentAuthority,
-} from '@dexterai/connect';
-
-const limits = noCustomX402Limits();
-const request = buildAgentAuthorityRequest({
-  target: { kind: 'device-code', userCode },
-  expectedVaultPda: wallet.vaultPda,
-  agentLabel: 'Hermes',
-  grantExpiresAt: limits.expiresAt,
-  rules: [buildX402PaymentRule(limits)],
-});
-
-const challenge = await beginAgentAuthority({
-  ownerAccessToken,
-  operationId: crypto.randomUUID(),
-  request,
-});
-
-// Run startAuthentication({ optionsJSON: challenge.authorizationOptions })
-// from the owner's confirmation gesture, then stage the returned credential.
-await stageAgentAuthority({ ownerAccessToken, authorization: challenge, credential });
-
-const authority = await readAgentAuthority({ accessToken: openDexterToken });
-authority.grantId;
-authority.capacity?.remainingPerCallAmountAtomic;
-```
-
-`buildBoundedX402BootstrapRequest`, `beginBoundedX402Authority`, and
-`stageBoundedX402Authority` provide the x402-only path used by the hosted OAuth
-setup screen. `validateBoundedX402Draft` parses custom USDC limits without
-floating point. `noCustomX402Limits` records the owner's explicit choice not to
-add a custom ceiling.
-
-The older automatic agent-spend controls remain available while existing
-wallets migrate:
-
-```ts
-import {
-  assembleAgentSpendStatus,
-  enableAgentSpend,
-  revokeAgentSpend,
-  createPasskeySigner,
-} from '@dexterai/connect';
-```
-
-The verbs are framework-free and take `apiOrigin` as a parameter; the SDK
-reads no environment variables.
+Key helpers include `buildAgentAuthorityRequest`, `beginAgentAuthority`,
+`stageAgentAuthority`, and `readAgentAuthority`. The bounded x402 helpers provide
+the equivalent hosted setup path for x402-only grants.
 
 ## World ID
 
@@ -281,66 +244,19 @@ import { VerifyPersonhood } from '@dexterai/connect/worldid';
 <VerifyPersonhood onSuccess={(proof) => sendToYourVerifier(proof)} />
 ```
 
-`useVerifyPersonhood` is the headless version. Requires the optional
+`useVerifyPersonhood` is the headless form. This entry requires the optional
 `@worldcoin/idkit` peer.
-
-## Wallet-only sign-in (no account session)
-
-`recoverWallet` re-points a browser at an existing Dexter Wallet. The wallet
-IS the sign-in; nothing else is minted. Use it when your surface treats the
-wallet as the identity (the dexter.cash header does exactly this):
-
-```ts
-import { recoverWallet } from '@dexterai/connect';
-
-const outcome = await recoverWallet({ preferImmediate: true }); // fire on TAP, never on mount
-if (outcome.ok) {
-  // outcome.vault.swigAddress and outcome.vault.walletLabel; the store and every
-  // useIdentity/useDexterWallet surface is already updated.
-} else if (outcome.reason === 'no_credential') {
-  // this device has no wallet passkey; offer your create flow
-} else if (outcome.reason === 'cancelled') {
-  // the user dismissed the sheet; stay silent
-}
-```
-
-It returns a discriminated outcome instead of throwing: user cancel is a
-normal result in WebAuthn, not an exception. `preferImmediate` uses Chrome
-149+'s immediate UI mode to fast-fail instantly when the device holds no
-passkey (no empty account-picker sheet); everywhere else it falls back to the
-normal modal. It works from any website. Off dexter.cash, the ceremony runs in
-the hosted popup automatically.
-
-React: `<SignInWithDexter mode="recover" preferImmediate onRecovered={…} />`
-(after a successful recover the element renders null; show identity with
-`DexterWalletChip` over `useIdentity`), or `useSignInWithDexter().recover()`.
-
-## Wallet lifecycle
-
-- `createWallet` mints a brand-new named passkey + vault; `passkeyLogin` signs
-  an existing one in; `continueWithDexter` resumes a known wallet;
-  `recoverWallet` restores the wallet with no account session.
-- The **wallet store** (`getActiveHandle`, `listWallets`, `switchWallet`,
-  `ejectActiveWallet`, `forgetWallet`, `subscribeWallet`) is the canonical
-  owner of the active-wallet handle. Read and write through it rather than
-  touching localStorage.
-- The **WebAuthn Signal API** helpers (`renamePasskey`, `prunePasskey`,
-  `syncAcceptedPasskeys`, `passkeySignalSupport`) keep the OS keychain in sync
-  where the browser supports it.
-- `resolveIdentity` combines the wallet handle with whatever account token you
-  pass in; `ceremonyPhaseLabel` gives shared copy for connecting-step UI;
-  `createAnonServerPolicy` builds the anonymous server policy for the signer.
 
 ## Peer dependencies
 
-| Peer | Required | Why |
+| Peer | Required | Purpose |
 |---|---|---|
-| `react` >=18 | yes | the `/react` and `/worldid` surfaces |
-| `@dexterai/vault` ^0.43 | yes | hardened signer envelope validation + agent-spend message builders |
-| `@solana/web3.js` | optional | passkey and agent-spend signing paths |
-| `@worldcoin/idkit` | optional | only for `/worldid` |
+| `react` >=18 | yes | React and World ID entry points |
+| `@dexterai/vault` ^0.43 | yes | Wallet signer and governed authority messages |
+| `@solana/web3.js` | optional | Passkey and agent signing paths |
+| `@worldcoin/idkit` | optional | World ID controls |
 
-The `/server` entry has none of these peers; it depends only on `jose`.
+The server entry depends only on `jose`.
 
 ## License
 
