@@ -194,6 +194,23 @@ WebAuthn challenge and verification calls use `https://api.dexter.cash`. The
 default `transport: 'auto'` selects inline or popup transport. Integrators can
 force `popup` or `inline` when their environment requires it.
 
+The first-party page uses the guarded hosted entry instead of importing raw
+login or Wallet-store functions:
+
+```ts
+import { runHostedCeremony } from '@dexterai/connect/hosted';
+
+const result = await runHostedCeremony({
+  operation: 'continue',
+  walletStore: 'provisional',
+});
+```
+
+This entry runs only on `https://dexter.cash`. It pins the inline transport and
+Dexter API while preserving provisional Wallet results for the opener. The root
+package continues to expose the complete identity transition rather than its
+private login and browser-roster steps.
+
 ## Server verification
 
 ```ts

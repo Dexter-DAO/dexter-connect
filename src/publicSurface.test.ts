@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import * as connect from './index';
 import * as react from './react';
+import * as hosted from './hosted';
 
 describe('Connect 0.29 public surface', () => {
   it('exports the canonical identity transition and control contract', () => {
@@ -44,5 +45,14 @@ describe('Connect 0.29 public surface', () => {
     ]) {
       expect(react).not.toHaveProperty(name);
     }
+  });
+
+  it('exposes one origin-guarded hosted ceremony entry', () => {
+    expect(hosted).toHaveProperty('runHostedCeremony');
+    expect(hosted).toHaveProperty('DEXTER_HOSTED_CEREMONY_ORIGIN');
+    expect(hosted).not.toHaveProperty('passkeyLogin');
+    expect(hosted).not.toHaveProperty('continueWithDexter');
+    expect(hosted).not.toHaveProperty('listWallets');
+    expect(connect).not.toHaveProperty('runHostedCeremony');
   });
 });

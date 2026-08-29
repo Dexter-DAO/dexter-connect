@@ -1,7 +1,13 @@
 import { defineConfig } from 'tsup';
 
 export default defineConfig({
-  entry: { index: 'src/index.ts', react: 'src/react.ts', worldid: 'src/worldid.tsx', server: 'src/server.ts' },
+  entry: {
+    index: 'src/index.ts',
+    react: 'src/react.ts',
+    hosted: 'src/hosted.ts',
+    worldid: 'src/worldid.tsx',
+    server: 'src/server.ts',
+  },
   format: ['esm'],
   dts: true,
   clean: true,
