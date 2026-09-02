@@ -8,14 +8,19 @@ const relay = vi.hoisted(() => ({
 }));
 const enrollment = vi.hoisted(() => ({ createWallet: vi.fn() }));
 const recovery = vi.hoisted(() => ({ recoverWallet: vi.fn() }));
+const missingVaultRecovery = vi.hoisted(() => ({
+  runHostedMissingVaultRecoveryProof: vi.fn(),
+}));
 
 vi.mock('./relay', () => relay);
 vi.mock('./enroll', () => enrollment);
 vi.mock('./recover', () => recovery);
+vi.mock('./missingVaultRecovery', () => missingVaultRecovery);
 
 import {
   DEXTER_HOSTED_CEREMONY_ORIGIN,
   runHostedCeremony,
+  runHostedMissingVaultRecoveryProof,
 } from './hosted';
 
 interface HappyWindow extends Window {
@@ -154,5 +159,30 @@ describe('hosted ceremony entry', () => {
     ).rejects.toMatchObject({ code: 'conflicting_agent_delegation' });
     expect(relay.continueWithDexter).not.toHaveBeenCalled();
     expect(enrollment.createWallet).not.toHaveBeenCalled();
+  });
+
+  it('keeps the missing-Vault proof on the pinned hosted origin', async () => {
+    const options = {
+      challenge: 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE',
+      rpId: 'dexter.cash',
+      userVerification: 'required' as const,
+    };
+    const assertion = { id: 'credential-id' };
+    missingVaultRecovery.runHostedMissingVaultRecoveryProof.mockResolvedValue(assertion);
+
+    await expect(runHostedMissingVaultRecoveryProof(options)).resolves.toBe(assertion);
+    expect(
+      missingVaultRecovery.runHostedMissingVaultRecoveryProof,
+    ).toHaveBeenCalledWith(options);
+
+    (window as unknown as HappyWindow).happyDOM?.setURL?.(
+      'https://merchant.example/connect',
+    );
+    await expect(runHostedMissingVaultRecoveryProof(options)).rejects.toMatchObject({
+      code: 'hosted_ceremony_origin_required',
+    });
+    expect(
+      missingVaultRecovery.runHostedMissingVaultRecoveryProof,
+    ).toHaveBeenCalledTimes(1);
   });
 });

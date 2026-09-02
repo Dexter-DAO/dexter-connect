@@ -211,6 +211,28 @@ Dexter API while preserving provisional Wallet results for the opener. The root
 package continues to expose the complete identity transition rather than its
 private login and browser-roster steps.
 
+### Repair a missing Vault record
+
+Use this only after the API reports `vault_not_found` for an existing account.
+The account holder must sign in to that same account again before starting the
+repair.
+
+```ts
+import { recoverMissingVaultForAccount } from '@dexterai/connect';
+
+const result = await recoverMissingVaultForAccount({
+  accountAccessToken: session.access_token,
+});
+
+result.account.handle; // the X account confirmed by the API
+result.vault.vaultPda;  // the Vault attached to that account
+```
+
+The passkey prompt runs in the pinned `dexter.cash` window. The account token
+stays in the calling app. A successful repair attaches the missing Vault to the
+account already signed in; it does not create an account, mint a new session, or
+change the browser's active Wallet.
+
 ## Server verification
 
 ```ts

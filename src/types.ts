@@ -1,5 +1,10 @@
 // @dexterai/connect — public types.
 
+import type {
+  AuthenticationResponseJSON,
+  PublicKeyCredentialRequestOptionsJSON,
+} from '@simplewebauthn/browser';
+
 /** Supabase session tokens returned by dexter-api's passkey-login (camelCase). */
 export interface PasskeyLoginTokens {
   accessToken: string;
@@ -79,7 +84,13 @@ export type WalletStoreMode = 'commit' | 'provisional';
 export type AgentDelegationMode = 'configure-now' | 'deferred';
 
 /** Exact action the hosted Dexter consent window is being asked to perform. */
-export type CeremonyOperation = 'signin' | 'create' | 'continue' | 'recover' | 'sign';
+export type CeremonyOperation =
+  | 'signin'
+  | 'create'
+  | 'continue'
+  | 'recover'
+  | 'sign'
+  | 'recover-missing-vault';
 
 /** Minimal vault identity transferred to Dexter's hosted signing window. */
 export interface HostedSignVaultIdentity {
@@ -105,6 +116,54 @@ export interface HostedSignResult {
   signature: Uint8Array;
   clientDataJSON: Uint8Array;
   authenticatorData: Uint8Array;
+}
+
+/**
+ * Public-key options that cross from an authenticated app to Dexter's hosted
+ * recovery window. The SDK validates these against the fixed recovery
+ * contract before they leave the opener and again before WebAuthn runs.
+ */
+export interface HostedMissingVaultRecoveryRequestPayload {
+  options: PublicKeyCredentialRequestOptionsJSON;
+  account: MissingVaultRecoveryAccount;
+}
+
+/** The assertion returned by Dexter's hosted recovery window. */
+export type HostedMissingVaultRecoveryResult = AuthenticationResponseJSON;
+
+/** Durable account identity selected by the authenticated recovery API. */
+export interface MissingVaultRecoveryAccount {
+  provider: 'x';
+  /** Canonical X handle, including the leading @. */
+  handle: string;
+}
+
+/** Vault row attached to the already-authenticated account after recovery. */
+export interface MissingVaultRecoveryVault {
+  vaultPda: string;
+  swigAddress: string;
+  receiveAddress: string;
+  userHandle: string;
+  credentialId: string;
+  state: 'initialized';
+}
+
+/** Result of explicitly repairing an account whose passkey exists without its Vault row. */
+export interface MissingVaultRecoveryResult {
+  recovered: true;
+  alreadyRecovered: boolean;
+  relation: 'bound';
+  account: MissingVaultRecoveryAccount;
+  vault: MissingVaultRecoveryVault;
+}
+
+export interface MissingVaultRecoveryConfig {
+  /** Supabase access token for the existing account being repaired. */
+  accountAccessToken: string;
+  /** Compatibility-only API base; omitted or exactly https://api.dexter.cash. */
+  apiBase?: string;
+  /** Compatibility-only hosted page; omitted or exactly https://dexter.cash/connect. */
+  connectHost?: string;
 }
 
 /**

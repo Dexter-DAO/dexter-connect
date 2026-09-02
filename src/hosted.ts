@@ -8,6 +8,10 @@
 
 import { createWallet, type CreateWalletResult } from './enroll';
 import { recoverWallet } from './recover';
+import {
+  runHostedMissingVaultRecoveryProof as runMissingVaultRecoveryProof,
+} from './missingVaultRecovery';
+import type { AuthenticationResponseJSON } from '@simplewebauthn/browser';
 import { continueWithDexter, passkeyLogin, type ContinueResult } from './relay';
 import type { SpendPolicy } from './policy';
 import type {
@@ -153,6 +157,18 @@ export async function runHostedCeremony(
     default:
       throw new ConnectError('unsupported_hosted_ceremony');
   }
+}
+
+/**
+ * Run only the account-bound missing-Vault proof supplied by an opener after
+ * the exact popup handshake. API/session binding and completion stay in the
+ * opener; this page receives no account token.
+ */
+export async function runHostedMissingVaultRecoveryProof(
+  options: unknown,
+): Promise<AuthenticationResponseJSON> {
+  assertHostedCeremonyOrigin();
+  return runMissingVaultRecoveryProof(options);
 }
 
 function assertHostedDelegationChoice(request: HostedCeremonyRequest): void {

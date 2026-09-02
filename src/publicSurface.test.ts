@@ -11,6 +11,7 @@ describe('Connect 0.29 public surface', () => {
     expect(connect).toHaveProperty('createDexterControlModel');
     expect(react).toHaveProperty('useDexterConnection');
     expect(react).toHaveProperty('REMOVE_DEXTER_FROM_DEVICE_CONFIRMATION');
+    expect(connect).toHaveProperty('recoverMissingVaultForAccount');
   });
 
   it('keeps the browser roster and partial-session controls private', () => {
@@ -50,6 +51,7 @@ describe('Connect 0.29 public surface', () => {
   it('exposes one origin-guarded hosted ceremony entry', () => {
     expect(hosted).toHaveProperty('runHostedCeremony');
     expect(hosted).toHaveProperty('DEXTER_HOSTED_CEREMONY_ORIGIN');
+    expect(hosted).toHaveProperty('runHostedMissingVaultRecoveryProof');
     expect(hosted).not.toHaveProperty('passkeyLogin');
     expect(hosted).not.toHaveProperty('continueWithDexter');
     expect(hosted).not.toHaveProperty('listWallets');

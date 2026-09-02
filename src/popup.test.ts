@@ -250,6 +250,124 @@ describe('hosted popup result boundary', () => {
     await expect(pending).resolves.toEqual(result);
   });
 
+  it('opens before loading recovery options and sends only those options after exact hello', async () => {
+    const order: string[] = [];
+    const popup = { closed: false, close: vi.fn(), postMessage: vi.fn() };
+    vi.spyOn(window, 'open').mockImplementation(() => {
+      order.push('open');
+      return popup as unknown as Window;
+    });
+    let resolveOptions!: (value: {
+      options: {
+        challenge: string;
+        rpId: string;
+        userVerification: 'required';
+      };
+      account: { provider: 'x'; handle: string };
+    }) => void;
+    const loadOptions = vi.fn(() => {
+      order.push('load');
+      return new Promise<{
+        options: {
+          challenge: string;
+          rpId: string;
+          userVerification: 'required';
+        };
+        account: { provider: 'x'; handle: string };
+      }>((resolve) => {
+        resolveOptions = resolve;
+      });
+    });
+    const pending = openCeremonyPopup<{ proved: true }>('recover-missing-vault', {
+      missingVaultRecoveryRequest: loadOptions,
+    });
+    const openedUrl = new URL(vi.mocked(window.open).mock.calls[0]?.[0] as string);
+    const requestId = openedUrl.searchParams.get('requestId') ?? '';
+    const harness: PopupHarness = {
+      pending: pending as unknown as Promise<{ connected: true }>,
+      popup,
+      requestId,
+      openedUrl,
+      op: 'recover-missing-vault',
+    };
+
+    expect(order).toEqual(['open', 'load']);
+    expect([...openedUrl.searchParams.keys()].sort()).toEqual(
+      ['op', 'origin', 'requestId', 'v'].sort(),
+    );
+    expect(openedUrl.search).not.toContain('token');
+    expect(openedUrl.search).not.toContain('challenge');
+
+    postHello(harness);
+    expect(popup.postMessage).toHaveBeenCalledTimes(1);
+    postResult(
+      harness,
+      'https://dexter.cash',
+      requestId,
+      { connected: true },
+      'recover-missing-vault',
+    );
+    expect(popup.close).not.toHaveBeenCalled();
+
+    const challenge = 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE';
+    resolveOptions({
+      options: {
+        challenge,
+        rpId: 'dexter.cash',
+        userVerification: 'required',
+      },
+      account: { provider: 'x', handle: '@branch' },
+    });
+    await Promise.resolve();
+    expect(popup.postMessage).toHaveBeenNthCalledWith(
+      2,
+      {
+        v: 1,
+        type: 'dexter-connect:missing-vault-recovery-request',
+        requestId,
+        op: 'recover-missing-vault',
+        payload: {
+          account: { provider: 'x', handle: '@branch' },
+          options: {
+            challenge,
+            rpId: 'dexter.cash',
+            userVerification: 'required',
+          },
+        },
+      },
+      'https://dexter.cash',
+    );
+
+    postResult(
+      harness,
+      'https://dexter.cash',
+      requestId,
+      { connected: true },
+      'recover-missing-vault',
+    );
+    await expect(pending).resolves.toEqual({ connected: true });
+  });
+
+  it('rejects a recovery loader on any other operation', () => {
+    const open = vi.spyOn(window, 'open');
+
+    expect(() =>
+      openCeremonyPopup('signin', {
+        missingVaultRecoveryRequest: async () => ({
+          options: {
+            challenge: 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE',
+            rpId: 'dexter.cash',
+            userVerification: 'required',
+          },
+          account: { provider: 'x', handle: '@branch' },
+        }),
+      }),
+    ).toThrowError(
+      expect.objectContaining({ code: 'unexpected_missing_vault_recovery_request' }),
+    );
+    expect(open).not.toHaveBeenCalled();
+  });
+
   it('keeps arbitrary website integration while opening only the hosted Dexter URL', async () => {
     const harness = beginPopup();
 

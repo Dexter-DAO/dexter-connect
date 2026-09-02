@@ -1,12 +1,14 @@
 import {
   ConnectError,
   type CeremonyOperation,
+  type HostedMissingVaultRecoveryRequestPayload,
   type HostedSignRequestPayload,
   type WalletStoreMode,
   type AgentDelegationMode,
   resolveAgentDelegationMode,
   resolveWalletStoreMode,
 } from './types';
+import { normalizeMissingVaultRecoveryOptions } from './missingVaultRecoveryContract';
 import { resolveDexterConnectHost } from './trust';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -60,6 +62,15 @@ interface PopupSignRequestMessage {
   payload: HostedSignRequestPayload;
 }
 
+/** Sent exactly once after the exact recovery popup completes hello/ack. */
+interface PopupMissingVaultRecoveryRequestMessage {
+  v: 1;
+  type: 'dexter-connect:missing-vault-recovery-request';
+  requestId: string;
+  op: 'recover-missing-vault';
+  payload: HostedMissingVaultRecoveryRequestPayload;
+}
+
 interface PopupResultMessage {
   v: 1;
   type: 'dexter-connect:result';
@@ -86,6 +97,12 @@ export function openCeremonyPopup<T>(
     walletStore?: WalletStoreMode;
     agentDelegation?: AgentDelegationMode;
     signRequest?: HostedSignRequestPayload;
+    /**
+     * Internal recovery seam. The loader is invoked only after window.open so
+     * iOS Safari keeps the popup tied to the user's tap. It returns only
+     * server-issued public-key options; the account token never crosses.
+     */
+    missingVaultRecoveryRequest?: () => Promise<HostedMissingVaultRecoveryRequestPayload>;
   } = {},
 ): Promise<T> {
   if (typeof window === 'undefined') {
@@ -97,6 +114,10 @@ export function openCeremonyPopup<T>(
   const openerOrigin = window.location.origin;
   const requestId = makeNonce();
   const signRequest = snapshotSignRequest(op, config.signRequest);
+  const recoveryOptionsLoader = snapshotRecoveryLoader(
+    op,
+    config.missingVaultRecoveryRequest,
+  );
   const walletStore = resolveWalletStoreMode(config.walletStore);
   const createsWallet = op === 'create' || op === 'continue';
   if (!createsWallet && config.agentDelegation !== undefined) {
@@ -127,6 +148,39 @@ export function openCeremonyPopup<T>(
 
     let settled = false;
     let handshakeComplete = false;
+    let recoveryRequestSent = false;
+    let recoveryRequest: HostedMissingVaultRecoveryRequestPayload | undefined;
+
+    const sendRecoveryRequest = () => {
+      if (
+        settled ||
+        !handshakeComplete ||
+        recoveryRequestSent ||
+        !recoveryRequest
+      ) {
+        return;
+      }
+      const request: PopupMissingVaultRecoveryRequestMessage = {
+        v: 1,
+        type: 'dexter-connect:missing-vault-recovery-request',
+        requestId,
+        op: 'recover-missing-vault',
+        payload: recoveryRequest,
+      };
+      try {
+        popup.postMessage(request, hostOrigin);
+        recoveryRequestSent = true;
+      } catch (err) {
+        finish(() =>
+          reject(
+            new ConnectError(
+              'popup_handshake_failed',
+              err instanceof Error ? err.message : String(err),
+            ),
+          ),
+        );
+      }
+    };
     const onMessage = (event: MessageEvent) => {
       if (event.origin !== hostOrigin) return; // only trust the hosted origin
       if (event.source !== popup) return; // only trust the exact window we opened
@@ -158,6 +212,7 @@ export function openCeremonyPopup<T>(
             popup.postMessage(request, event.origin);
           }
           handshakeComplete = true;
+          sendRecoveryRequest();
         } catch (err) {
           finish(() =>
             reject(
@@ -174,6 +229,7 @@ export function openCeremonyPopup<T>(
       // A result is meaningful only after the exact popup completed the
       // browser-stamped origin handshake for this exact operation.
       if (data.type !== 'dexter-connect:result' || !handshakeComplete) return;
+      if (op === 'recover-missing-vault' && !recoveryRequestSent) return;
       if (data.ok) finish(() => resolve(data.result as T));
       else
         finish(() =>
@@ -204,7 +260,78 @@ export function openCeremonyPopup<T>(
     }
 
     window.addEventListener('message', onMessage);
+
+    // Invoke this only after the popup exists. Fetching before window.open
+    // breaks the user-activation chain on iOS Safari and lets popup blockers
+    // turn a valid recovery attempt into a dead end.
+    if (recoveryOptionsLoader) {
+      let pendingOptions: Promise<HostedMissingVaultRecoveryRequestPayload>;
+      try {
+        pendingOptions = recoveryOptionsLoader();
+      } catch (err) {
+        finish(() => reject(asRecoveryOptionsError(err)));
+        return;
+      }
+      void pendingOptions.then(
+        (request) => {
+          if (settled) return;
+          try {
+            recoveryRequest = {
+              options: normalizeMissingVaultRecoveryOptions(request?.options),
+              account: snapshotRecoveryAccount(request?.account),
+            };
+            sendRecoveryRequest();
+          } catch (err) {
+            finish(() => reject(asRecoveryOptionsError(err)));
+          }
+        },
+        (err) => finish(() => reject(asRecoveryOptionsError(err))),
+      );
+    }
   });
+}
+
+function snapshotRecoveryLoader(
+  op: CeremonyOperation,
+  loader?: () => Promise<HostedMissingVaultRecoveryRequestPayload>,
+): (() => Promise<HostedMissingVaultRecoveryRequestPayload>) | undefined {
+  if (op !== 'recover-missing-vault') {
+    if (loader !== undefined) {
+      throw new ConnectError(
+        'unexpected_missing_vault_recovery_request',
+        'missing Vault recovery options require the recovery operation',
+      );
+    }
+    return undefined;
+  }
+  if (typeof loader !== 'function') {
+    throw new ConnectError(
+      'missing_vault_recovery_request',
+      'missing Vault recovery requires server-issued public-key options',
+    );
+  }
+  return loader;
+}
+
+function snapshotRecoveryAccount(
+  value: HostedMissingVaultRecoveryRequestPayload['account'] | undefined,
+): HostedMissingVaultRecoveryRequestPayload['account'] {
+  if (
+    value?.provider !== 'x' ||
+    typeof value.handle !== 'string' ||
+    !/^@[A-Za-z0-9_]{1,64}$/.test(value.handle)
+  ) {
+    throw new ConnectError('missing_vault_recovery_account_malformed');
+  }
+  return { provider: 'x', handle: value.handle };
+}
+
+function asRecoveryOptionsError(err: unknown): ConnectError {
+  if (err instanceof ConnectError) return err;
+  return new ConnectError(
+    'missing_vault_recovery_challenge_failed',
+    err instanceof Error ? err.message : String(err),
+  );
 }
 
 function snapshotSignRequest(

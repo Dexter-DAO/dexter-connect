@@ -8,7 +8,12 @@ export type {
   DexterConnectConfig,
   AgentDelegationMode,
   WalletIdentityProof,
+  MissingVaultRecoveryConfig,
+  MissingVaultRecoveryResult,
+  MissingVaultRecoveryVault,
+  MissingVaultRecoveryAccount,
 } from './types';
+export { recoverMissingVaultForAccount } from './missingVaultRecovery';
 export { createAnonServerPolicy } from './anon-policy';
 export type { AnonServerPolicy, AnonChallengeResult } from './anon-policy';
 export { createPasskeySigner } from './signer';
