@@ -300,3 +300,29 @@ The server entry depends only on `jose`.
 ## License
 
 MIT
+
+### Private wallet activity
+
+Use the retained proof from the existing passkey ceremony for wallet activity and
+owner-operation status. The proof identifies the wallet; the server still verifies
+an exact operation assertion before any financial action. The request helper keeps
+proof material inside the SDK and only sends it to the canonical Dexter API.
+
+```ts
+import { fetchWithWalletIdentity, walletProofSessionStore } from '@dexterai/connect';
+
+const activeWallet = { userHandle, vaultPda };
+const wallet = walletProofSessionStore.bindingCandidate(userHandle, activeWallet);
+if (wallet) {
+  const response = await fetchWithWalletIdentity({
+    wallet,
+    activeWallet,
+    url: `/api/passkey-vault-anon/activity/v4?user_handle=${userHandle}`,
+  });
+}
+```
+
+Older device records can save `walletIdentityProof` returned after their normal
+verified owner-operation claim using `walletProofSessionStore.save(userHandle,
+walletIdentityProof)`. Preparation and the exact claim do not require a second
+passkey ceremony. A missing or expired proof does not authorize private reads.
