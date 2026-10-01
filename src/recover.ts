@@ -38,6 +38,8 @@ import {
 } from './immediate';
 import { resolveDexterApiBase, resolveDexterRpId } from './trust';
 
+import { clearPendingCreation } from './pendingCreation';
+
 const ANON_SIGN_BASE = '/api/passkey-anon/sign';
 
 // Resolve the immediate-mode capability probe at module load so the tap-time
@@ -180,10 +182,15 @@ export async function recoverWallet(config: RecoverWalletConfig = {}): Promise<R
     if (res.status === 404) return { ok: false, reason: 'no_credential' };
     if (!res.ok) return { ok: false, reason: 'error', error: new ConnectError(await readErrorCode(res)) };
     const data = (await res.json()) as {
+      verified?: boolean;
       credentialId: string;
       userHandle: string;
       walletIdentityProof?: unknown;
     };
+    if (data.verified !== true || data.credentialId !== credential.id
+      || typeof data.userHandle !== 'string' || !data.userHandle) {
+      throw new ConnectError('recover_verify_malformed');
+    }
     userHandle = data.userHandle;
     credentialId = data.credentialId;
     walletIdentityProof = parseWalletIdentityProof(data.walletIdentityProof);
@@ -211,10 +218,26 @@ export async function recoverWallet(config: RecoverWalletConfig = {}): Promise<R
       } | null;
     };
     if (!data.hasVault || !data.vault) {
-      return {
-        ok: false,
-        reason: 'error',
-        error: new ConnectError('vault_not_found', 'this sign-in key has no wallet attached'),
+      // The server just verified this credential. Resume its original identity
+      // when enrollment stopped before /initialize; never register another key
+      // or grant agent spending as part of recovery.
+      const initialized = await fetch(`${apiBase}/api/passkey-vault-anon/initialize`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${walletIdentityProof.token}`,
+        },
+        body: JSON.stringify({ userHandle, credentialId }),
+      });
+      if (!initialized.ok) return { ok: false, reason: 'error', error: new ConnectError(await readErrorCode(initialized)) };
+      const created = await initialized.json();
+      if (!created.vaultPda || !created.swigStateAddress) throw new ConnectError('initialize_malformed');
+      data.vault = {
+        vaultPda: created.vaultPda,
+        swigAddress: created.swigStateAddress,
+        receiveAddress: created.receiveAddress ?? null,
+        walletLabel: created.walletLabel ?? null,
+        isActivated: false,
       };
     }
     vault = {
@@ -239,6 +262,7 @@ export async function recoverWallet(config: RecoverWalletConfig = {}): Promise<R
       walletIdentityProof,
     );
   }
+  clearPendingCreation(credentialId);
   return { ok: true, userHandle, credentialId, vault, walletIdentityProof };
 }
 

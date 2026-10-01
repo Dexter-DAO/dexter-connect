@@ -244,3 +244,13 @@ describe('CreateWalletPanel — ceremony flow', () => {
     );
   });
 });
+
+it('shows the confirmed-absence restart guidance without another automatic ceremony', async () => {
+  createWallet.mockRejectedValueOnce(new ConnectError('enrollment_not_saved', 'Wallet setup was not saved. Start again to create your wallet.'));
+  const {container} = await render(<CreateWalletPanel transport="inline" />);
+  await click(cta(container));
+  await flush();
+  expect(container.querySelector('[role="alert"]')?.textContent).toBe('Wallet setup was not saved. Start again to create your wallet.');
+  expect(cta(container).disabled).toBe(false);
+  expect(createWallet).toHaveBeenCalledOnce();
+});
