@@ -28,6 +28,18 @@ fresh passkey ceremony and replaces the active identity only after verification.
 Agent authority always requires a separate owner grant. Creating or connecting a
 Wallet grants no agent spending authority.
 
+## Interrupted wallet setup
+
+`createWallet()` retains the original passkey when setup is interrupted. Calling
+it again resumes that wallet, including after a page reload, and may ask the
+owner to confirm the saved passkey. The pending wallet becomes active after
+initialization succeeds. Its original name and authored allowance stay with it.
+
+On another device, `recoverWallet()` can finish an enrolled passkey's missing
+wallet initialization after verifying that passkey. Recovery starts with zero
+agent spending allowance. Full sign-in also restores a missing wallet record
+while preserving the credential's existing account binding.
+
 ## Install
 
 ```bash
