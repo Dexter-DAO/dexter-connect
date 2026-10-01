@@ -35,6 +35,12 @@ it again resumes that wallet, including after a page reload, and may ask the
 owner to confirm the saved passkey. The pending wallet becomes active after
 initialization succeeds. Its original name and authored allowance stay with it.
 
+If enrollment never reached the server and its challenge expires, a fresh
+passkey check can confirm that the saved credential has no server record.
+Connect then clears that pending setup and returns `enrollment_not_saved`.
+The next explicit Create action starts a new wallet. Network errors, generic
+404 responses, and server failures retain the pending setup for another retry.
+
 On another device, `recoverWallet()` can finish an enrolled passkey's missing
 wallet initialization after verifying that passkey. Recovery starts with zero
 agent spending allowance. Full sign-in also restores a missing wallet record

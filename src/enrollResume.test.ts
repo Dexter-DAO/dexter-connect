@@ -94,3 +94,44 @@ describe('interrupted Wallet creation', () => {
     expect(startRegistration).toHaveBeenCalledOnce();
   });
 });
+
+describe('expired registration without a saved server credential', () => {
+  async function loseEnrollmentCompletion() {
+    fetchMock.mockReset().mockResolvedValueOnce(ok({ options: { challenge: 'fresh', rp: { id: 'dexter.cash' }, user: { id: 'original-handle' } } }))
+      .mockRejectedValueOnce(new TypeError('connection lost before enrollment completed'));
+    await expect(createWallet({ transport: 'inline' })).rejects.toThrow('connection lost');
+    fetchMock.mockResolvedValueOnce(failed('verification_failed'))
+      .mockResolvedValueOnce(ok({ options: { challenge: 'fresh-recovery', rpId: 'dexter.cash' } }));
+  }
+
+  it('clears only confirmed absence and waits for a new explicit Create action', async () => {
+    await loseEnrollmentCompletion();
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 404, json: async () => ({ error: 'credential_not_found' }) });
+    await expect(createWallet({ transport: 'inline' })).rejects.toMatchObject({
+      code: 'enrollment_not_saved',
+      message: 'Wallet setup was not saved. Start again to create your wallet.',
+    });
+    expect(values.size).toBe(0);
+    expect(startRegistration).toHaveBeenCalledOnce();
+    expect(startAuthentication).toHaveBeenCalledWith({ optionsJSON: expect.objectContaining({allowCredentials:[{id:credential.id,type:'public-key'}]}) });
+    expect(setActiveWallet).not.toHaveBeenCalled();
+
+    const nextCredential = {...credential,id:'next-credential',rawId:'next-credential'};
+    vi.mocked(startRegistration).mockResolvedValueOnce(nextCredential as never);
+    fetchMock.mockResolvedValueOnce(ok({options:{challenge:'next-challenge',rp:{id:'dexter.cash'},user:{id:'next-handle'}}}))
+      .mockResolvedValueOnce(ok({...enrolled,credentialId:nextCredential.id,userHandle:'next-handle'}))
+      .mockResolvedValueOnce(ok({...initialized,vaultPda:'next-vault'}));
+    expect((await createWallet({transport:'inline'})).credentialId).toBe('next-credential');
+    expect(startRegistration).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['generic404', 'serverFailure', 'transportFailure'] as const)('retains the checkpoint after %s', async failure => {
+    await loseEnrollmentCompletion();
+    if (failure === 'transportFailure') fetchMock.mockRejectedValueOnce(new TypeError('connection lost'));
+    else fetchMock.mockResolvedValueOnce({ok:false,status:failure === 'generic404'?404:503,json:async()=>failure === 'generic404'?{}:{error:'credential_not_found'}});
+    await expect(createWallet({transport:'inline'})).rejects.toBeTruthy();
+    expect(values.size).toBe(1);
+    expect(startRegistration).toHaveBeenCalledOnce();
+    expect(setActiveWallet).not.toHaveBeenCalled();
+  });
+});

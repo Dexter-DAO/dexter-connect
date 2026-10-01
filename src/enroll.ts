@@ -247,7 +247,20 @@ async function resumeCreation(
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ credential }),
   });
-  if (!verification.ok) throw new ConnectError(await readErrorCode(verification));
+  if (!verification.ok) {
+    const code = await readErrorCode(verification);
+    // The fresh assertion names the exact saved credential. Only this explicit
+    // absence response permits a later, user-initiated creation to start anew.
+    // A transport error, generic 404, or server failure preserves the checkpoint.
+    if (verification.status === 404 && code === 'credential_not_found') {
+      clearPendingCreation(checkpoint.credentialId);
+      throw new ConnectError(
+        'enrollment_not_saved',
+        'Wallet setup was not saved. Start again to create your wallet.',
+      );
+    }
+    throw new ConnectError(code);
+  }
   const verified = await verification.json();
   if (verified.verified !== true || verified.credentialId !== checkpoint.credentialId
     || (checkpoint.enrolled && verified.userHandle !== checkpoint.enrolled.userHandle)) {
