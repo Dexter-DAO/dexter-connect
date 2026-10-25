@@ -213,6 +213,11 @@ private login and browser-roster steps.
 
 ### Repair a missing Vault record
 
+`recoverMissingVaultForAccount` is exported by the 0.30.0 source on `main`.
+The published npm package is 0.29.1 and does not include this helper. Its
+[implementation](./src/missingVaultRecovery.ts) and
+[tests](./src/missingVaultRecovery.test.ts) are available for source review.
+
 Use this only after the API reports `vault_not_found` for an existing account.
 The account holder must sign in to that same account again before starting the
 repair.
