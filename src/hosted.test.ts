@@ -59,6 +59,11 @@ describe('hosted ceremony entry', () => {
     );
   });
 
+  it('forwards the account target only through the pinned sign-in ceremony', async () => {
+    await runHostedCeremony({ operation: 'signin', targetUserHandle: 'AAAAAAAAAAAAAAAAAAAAAA', walletStore: 'provisional' });
+    expect(relay.passkeyLogin).toHaveBeenCalledWith({ apiBase: 'https://api.dexter.cash', transport: 'inline', targetUserHandle: 'AAAAAAAAAAAAAAAAAAAAAA', walletStore: 'provisional' }, undefined);
+  });
+
   it('preserves provisional keychain-first continuation and owner-only creation intent', async () => {
     relay.continueWithDexter.mockResolvedValue({ kind: 'needs_choice' });
 

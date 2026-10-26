@@ -75,6 +75,11 @@ export interface UseDexterConnectionConfig {
   readonly passkey?: Omit<PasskeyLoginConfig, 'apiBase' | 'walletStore'>;
 }
 
+export interface DexterConnectionTarget {
+  /** Connect this account, targeting its saved passkey when available. */
+  readonly userHandle: string;
+}
+
 export interface UseDexterConnection {
   readonly model: DexterControlModel;
   readonly identity: DexterIdentityView;
@@ -82,8 +87,8 @@ export interface UseDexterConnection {
   readonly operation: DexterConnectionOperation;
   readonly activeWallet: DexterWalletView | null;
   readonly error: ConnectError | null;
-  connect(): Promise<SignInResult>;
-  useAnotherDexterWallet(): Promise<SignInResult>;
+  connect(target?: DexterConnectionTarget): Promise<SignInResult>;
+  useAnotherDexterWallet(target?: DexterConnectionTarget): Promise<SignInResult>;
   disconnectDexter(): Promise<boolean>;
   removeFromThisDevice(
     confirmation: RemoveDexterFromDeviceConfirmation,
@@ -288,7 +293,7 @@ export function useDexterConnection(
     };
   }, [model.permissions.walletIdentityVisible, wallet.activeWallet]);
 
-  const connect = useCallback(async (): Promise<SignInResult> => {
+  const connect = useCallback(async (target?: DexterConnectionTarget): Promise<SignInResult> => {
     beginAction('connecting');
     setError(null);
     setTargetHandle(null);
@@ -296,6 +301,7 @@ export function useDexterConnection(
     try {
       const result = await connectDexterIdentity({
         ...passkey,
+        ...(target ? { targetUserHandle: target.userHandle } : {}),
         ...(apiBase ? { apiBase } : {}),
         ...(fetch ? { bindingFetch: fetch } : {}),
         installAccountSession: async (session) => {

@@ -41,6 +41,7 @@ interface HostedCeremonyBase {
 
 export interface HostedSignInCeremony extends HostedCeremonyBase {
   operation: 'signin';
+  targetUserHandle?: string;
 }
 
 type HostedDelegationChoice =
@@ -114,6 +115,7 @@ export async function runHostedCeremony(
         {
           apiBase: DEXTER_API_BASE,
           transport: 'inline',
+          ...(request.targetUserHandle !== undefined ? { targetUserHandle: request.targetUserHandle } : {}),
           ...persistence,
         },
         request.onPhase,

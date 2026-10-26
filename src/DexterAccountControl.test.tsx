@@ -5,6 +5,9 @@ import { render, click, keydown, type RenderHandle } from './testRender';
 import { DexterAccountControl } from './DexterAccountControl';
 import type { UseDexterConnection } from './useDexterConnection';
 
+const creation = vi.hoisted(() => vi.fn());
+vi.mock('./enroll', () => ({ createWallet: creation }));
+vi.mock('./popup', () => ({ shouldUsePopup: () => false }));
 const balance = vi.hoisted(() => vi.fn(() => ({ amount: '$236.00', loading: false, partial: false, refresh: vi.fn(async () => undefined) })));
 vi.mock('./useAccountPortfolio', () => ({ useAccountPortfolio: balance }));
 vi.mock('framer-motion', async (original) => ({ ...await original<typeof import('framer-motion')>(), useReducedMotion: () => true }));
@@ -63,6 +66,48 @@ async function open() { await click(button('Open Dexter account')); }
     await click(button('Disconnect Dexter'));
     expect(c.disconnectDexter).toHaveBeenCalledTimes(1);
     expect(c.removeFromThisDevice).not.toHaveBeenCalled();
+  });
+
+  it('finishes a newly created account through its targeted host sign-in', async () => {
+    const handle = 'AAAAAAAAAAAAAAAAAAAAAA';
+    creation.mockResolvedValue({ handle, vault: { userHandle: handle } });
+    const c = connection();
+    view = await render(<DexterAccountControl connection={c}/>);
+    await open();
+    await click(button('Create account'));
+    await click(button('Create account'));
+    expect(creation).toHaveBeenCalledTimes(1);
+    await click(button('Finish signing in'));
+    expect(c.connect).toHaveBeenCalledExactlyOnceWith({ userHandle: handle });
+  });
+
+  it.each(['Switch account', 'Disconnect Dexter'])('clears unfinished creation after %s', async action => {
+    const handle = 'AAAAAAAAAAAAAAAAAAAAAA';
+    creation.mockResolvedValue({ handle, vault: { userHandle: handle } });
+    const c = connection();
+    view = await render(<DexterAccountControl connection={c}/>);
+    await open();
+    await click(button('Create account'));
+    await click(button('Create account'));
+    const ready = connection(true);
+    const walletOnly = { ...ready, model: { ...ready.model, permissions: { ...ready.model.permissions, accountContentVisible: false } } };
+    await view.rerender(<DexterAccountControl connection={walletOnly}/>);
+    expect(button('Finish signing in')).toBeTruthy();
+    await click(button('Account settings'));
+    await click(button(action));
+    await view.rerender(<DexterAccountControl connection={connection()}/>);
+    if (action === 'Disconnect Dexter') await open();
+    expect(view.container.textContent).not.toContain('Finish signing in');
+  });
+
+  it('lets a wallet-only connection finish host sign-in with its exact account', async () => {
+    const ready = connection(true);
+    const walletOnly = { ...ready, model: { ...ready.model, permissions: { ...ready.model.permissions, accountContentVisible: false } } };
+    view = await render(<DexterAccountControl connection={walletOnly}/>);
+    await open();
+    await click(button('Account settings'));
+    await click(button('Sign in to this app'));
+    expect(walletOnly.connect).toHaveBeenCalledExactlyOnceWith({ userHandle: 'AAAAAAAAAAAAAAAAAAAAAA' });
   });
 
   it('withdraws private data when verification is lost, even with retained profile and menu items', async () => {

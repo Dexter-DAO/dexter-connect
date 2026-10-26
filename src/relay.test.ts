@@ -23,6 +23,7 @@ vi.mock('./popup', () => ({
 vi.mock('./walletStore', () => ({
   setActiveWallet: vi.fn(() => true),
   getActiveHandle: vi.fn(() => null),
+  getCredentialId: vi.fn(),
 }));
 
 vi.mock('./walletProofSession', () => ({
@@ -35,7 +36,7 @@ vi.mock('./walletProofSession', () => ({
 import { passkeyLogin, continueWithDexter } from './relay';
 import { startAuthentication, browserSupportsWebAuthn } from '@simplewebauthn/browser';
 import { openCeremonyPopup } from './popup';
-import { setActiveWallet } from './walletStore';
+import { setActiveWallet, getCredentialId } from './walletStore';
 import { ConnectError } from './types';
 
 const mockStartAuth = vi.mocked(startAuthentication);
@@ -95,11 +96,57 @@ const authResponse = {
 describe('passkeyLogin', () => {
   beforeEach(() => {
     mockSupports.mockReturnValue(true);
+    vi.mocked(getCredentialId).mockReset();
     mockStartAuth.mockResolvedValue(authResponse);
   });
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.clearAllMocks();
+  });
+
+  it('targets the saved passkey for the requested account', async () => {
+    const target = 'AAAAAAAAAAAAAAAAAAAAAA';
+    vi.mocked(getCredentialId).mockReturnValue('saved-credential-a');
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => challengeResp })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ ...tokensResp, vault: { ...fullVault, userHandle: target }, walletIdentityProof }) }));
+    await passkeyLogin({ targetUserHandle: target });
+    expect(getCredentialId).toHaveBeenCalledWith(target);
+    expect(mockStartAuth).toHaveBeenCalledWith({ optionsJSON: {
+      ...challengeResp.options, allowCredentials: [{ id: 'saved-credential-a', type: 'public-key' }],
+    } });
+    expect(mockSetActiveWallet).toHaveBeenCalledWith(expect.objectContaining({ handle: target }));
+  });
+
+  it.each(['commit', 'provisional'] as const)('rejects a different returned account before %s store writes', async walletStore => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => challengeResp })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ ...tokensResp, vault: fullVault, walletIdentityProof }) }));
+    await expect(passkeyLogin({ targetUserHandle: 'AAAAAAAAAAAAAAAAAAAAAA', walletStore })).rejects.toMatchObject({ code: 'target_account_mismatch' });
+    expect(mockSetActiveWallet).not.toHaveBeenCalled();
+  });
+
+  it('uses the keychain picker when a targeted account has no local credential', async () => {
+    const target = 'AAAAAAAAAAAAAAAAAAAAAA';
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => challengeResp })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ ...tokensResp, vault: { ...fullVault, userHandle: target }, walletIdentityProof }) }));
+    await passkeyLogin({ targetUserHandle: target });
+    expect(mockStartAuth).toHaveBeenCalledWith({ optionsJSON: challengeResp.options });
+  });
+
+  it('passes the target to the hosted ceremony and rejects a mismatched popup result', async () => {
+    mockPopup.mockResolvedValue({ session: tokensResp, vault: fullVault, walletIdentityProof });
+    await expect(passkeyLogin({ transport: 'popup', targetUserHandle: 'AAAAAAAAAAAAAAAAAAAAAA' })).rejects.toMatchObject({ code: 'target_account_mismatch' });
+    expect(mockPopup).toHaveBeenCalledWith('signin', expect.objectContaining({ targetUserHandle: 'AAAAAAAAAAAAAAAAAAAAAA' }));
+    expect(mockSetActiveWallet).not.toHaveBeenCalled();
+  });
+
+  it('rejects an invalid target before network or WebAuthn work', async () => {
+    const fetchMock = vi.fn(); vi.stubGlobal('fetch', fetchMock);
+    await expect(passkeyLogin({ targetUserHandle: 'invalid' })).rejects.toMatchObject({ code: 'invalid_target_account' });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mockStartAuth).not.toHaveBeenCalled();
   });
 
   it('runs challenge -> assert -> login and returns the session tokens', async () => {

@@ -110,6 +110,15 @@ describe('hosted popup result boundary', () => {
     expect(open).not.toHaveBeenCalled();
   });
 
+  it('carries the target account to the hosted sign-in route', () => {
+    const popup = { closed: false, close: vi.fn(), postMessage: vi.fn() };
+    vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window);
+    void openCeremonyPopup('signin', { targetUserHandle: 'AAAAAAAAAAAAAAAAAAAAAA', walletStore: 'provisional' });
+    const openedUrl = new URL(vi.mocked(window.open).mock.calls[0]?.[0] as string);
+    expect(openedUrl.searchParams.get('targetUserHandle')).toBe('AAAAAAAAAAAAAAAAAAAAAA');
+    expect(openedUrl.origin).toBe('https://dexter.cash');
+  });
+
   it('carries explicit deferred agent setup only on a create ceremony', () => {
     const popup = { closed: false, close: vi.fn(), postMessage: vi.fn() };
     vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window);

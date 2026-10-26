@@ -44,6 +44,7 @@ export function DexterAccountControl({ connection: dexter, open: controlledOpen,
   const [pending, setPending] = useState<ConnectionAction | null>(null);
   const [error, setError] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
+  const [createdHandle, setCreatedHandle] = useState<string | null>(null);
   const [manageOpen, setManageOpen] = useState(false);
   const [panelShift, setPanelShift] = useState(0);
   const pendingAction = useRef(false);
@@ -66,11 +67,17 @@ export function DexterAccountControl({ connection: dexter, open: controlledOpen,
     : name || email.split('@')[0] || 'Your Dexter account';
   const canCreate = !checking && dexter.model.stage === 'connect';
   const canOpenWallet = dexter.model.stage === 'ready' && permissions.walletDataVisible;
+  const finishCreation = Boolean(createdHandle && !permissions.accountContentVisible);
   const needsConnection = ['connect', 'repair', 'offline', 'error'].includes(dexter.model.stage);
   const links = resolveAccountNavigation(navigation, dexter.activeWallet);
   const close = () => changeOpen.current(false);
 
   useEffect(() => setReady(true), []);
+  useEffect(() => {
+    if (permissions.accountContentVisible || (dexter.activeWallet?.userHandle && dexter.activeWallet.userHandle !== createdHandle)) {
+      setCreatedHandle(null);
+    }
+  }, [createdHandle, dexter.activeWallet?.userHandle, permissions.accountContentVisible]);
   useLayoutEffect(() => {
     if (!open) return;
     const position = () => {
@@ -110,10 +117,15 @@ export function DexterAccountControl({ connection: dexter, open: controlledOpen,
     if (busy || pendingAction.current) return;
     pendingAction.current = true; setPending(action); setError('');
     try {
-      if (action === 'connect') await dexter.connect();
-      if (action === 'switch') await dexter.useAnotherDexterWallet();
+      if (action === 'connect') {
+        const target = createdHandle ?? (canOpenWallet && !permissions.accountContentVisible ? dexter.activeWallet?.userHandle : undefined);
+        if (target) await dexter.connect({ userHandle: target });
+        else await dexter.connect();
+        setCreatedHandle(null);
+      }
+      if (action === 'switch') { await dexter.useAnotherDexterWallet(); setCreatedHandle(null); }
       if (action === 'retry') await dexter.retry();
-      if (action === 'disconnect') { await dexter.disconnectDexter(); close(); }
+      if (action === 'disconnect') { await dexter.disconnectDexter(); setCreatedHandle(null); close(); }
     } catch (caught) {
       setError(action === 'disconnect' ? 'Dexter could not finish that action. Try again.'
         : formatError(caught instanceof ConnectError ? caught.code : dexter.error?.code));
@@ -140,16 +152,16 @@ export function DexterAccountControl({ connection: dexter, open: controlledOpen,
         {checking ? <p className="dx-account-status" role="status">Checking your connection...</p> : <>
           {canCreate && createOpen ? <div className="dx-account-creation">
             <button type="button" className="dx-account-back" onClick={() => setCreateOpen(false)}>Back to sign in</button>
-            <CreateWalletPanel agentDelegation="deferred" terminology="account" withMark={false} onCreated={() => setCreateOpen(false)}/>
+            <CreateWalletPanel agentDelegation="deferred" terminology="account" withMark={false} onCreated={(result) => { setCreatedHandle(result.handle); setCreateOpen(false); }}/>
           </div> : <>
-            {needsConnection && <div className="dx-account-entry">
+            {(needsConnection || finishCreation) && <div className="dx-account-entry">
               {dexter.model.stage === 'repair' && <p className="dx-account-explanation">Reconnect your passkey to continue.</p>}
               <button type="button" className="dx-account-primary" disabled={busy}
                 onClick={() => void run(dexter.model.primaryAction === 'retry' ? 'retry' : 'connect')}>
-                {busy ? 'Opening passkey...' : dexter.model.stage === 'repair' ? 'Reconnect Dexter'
+                {busy ? 'Opening passkey...' : finishCreation ? 'Finish signing in' : dexter.model.stage === 'repair' ? 'Reconnect Dexter'
                   : dexter.model.stage === 'error' || dexter.model.stage === 'offline' ? 'Try again' : 'Sign in with Dexter'}
               </button>
-              {canCreate && <button type="button" className="dx-account-create" onClick={() => setCreateOpen(true)} disabled={busy}>Create account</button>}
+              {canCreate && !finishCreation && <button type="button" className="dx-account-create" onClick={() => setCreateOpen(true)} disabled={busy}>Create account</button>}
             </div>}
             {canOpenWallet && <div key={`${dexter.activeWallet?.userHandle ?? 'account'}:${dexter.activeWallet?.vaultPda ?? ''}`}>
               {renderSummary ? renderSummary(close) : <DefaultSummary connection={dexter} navigation={links} LinkComponent={LinkComponent} onNavigate={close} styleNonce={styleNonce}/>}
@@ -170,6 +182,7 @@ export function DexterAccountControl({ connection: dexter, open: controlledOpen,
               {manageOpen && <motion.div id={`${id}-settings`} className="dx-account-connectionActions"
                 initial={reduced ? false : { opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: reduced ? 0 : .16 }}>
                 {canOpenWallet && links.settings && <LinkComponent href={links.settings.href} onClick={close}>{links.settings.label ?? 'Account settings'}</LinkComponent>}
+                {canOpenWallet && !permissions.accountContentVisible && <button type="button" onClick={() => void run('connect')} disabled={busy}>Sign in to this app</button>}
                 {dexter.model.stage === 'ready' && <button type="button" onClick={() => void run('switch')} disabled={busy}>Switch account</button>}
                 <button type="button" onClick={() => void run('disconnect')} disabled={busy}>{pending === 'disconnect' ? 'Disconnecting...' : 'Disconnect Dexter'}</button>
               </motion.div>}
