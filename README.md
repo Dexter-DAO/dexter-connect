@@ -64,6 +64,54 @@ npm install @dexterai/connect @dexterai/vault react
 | `@dexterai/connect/server` | Local verification of Dexter account sessions |
 | `@dexterai/connect/worldid` | Optional World ID proof-of-personhood control |
 
+## Account panel
+
+`DexterAccountControl` provides Dexter's account menu: balance, Send and Receive,
+activity, connected apps, account switching, and connection settings. It uses the
+same `useDexterConnection` instance as the app. The panel includes its brand marks,
+styles, and motion; it inherits the host font and respects reduced motion.
+
+```tsx
+import { DexterAccountControl, type UseDexterConnection } from '@dexterai/connect/react';
+
+export function AccountEntry({ connection }: { connection: UseDexterConnection }) {
+  return <DexterAccountControl connection={connection} />;
+}
+```
+
+The panel reads the selected account's portfolio while open. Partial pricing is
+labeled Priced assets. A failed read displays Balance unavailable; switching
+accounts clears the previous balance immediately. Wallet holdings are bound to
+`receiveAddress`, the asset address. `walletAddress` identifies the Swig control
+account and must not be used to match a portfolio.
+
+Destinations open Dexter by default and carry the selected account. Dexter asks
+for that account's passkey if a different account is active there. Set `navigation` to use local app routes,
+or set an entry to `false` to hide it. `items` adds app-specific destinations with
+`requires: 'account'` or `requires: 'wallet'`; only verified access exposes them.
+The destination itself must enforce its own authorization.
+
+```tsx
+<DexterAccountControl
+  connection={connection}
+  navigation={{
+    money: { href: '/money' },
+    activity: { href: '/activity' },
+    profile: false,
+  }}
+  items={[{ id: 'seller', label: 'Your servers', href: '/servers', requires: 'account' }]}
+/>
+```
+
+`open` and `onOpenChange` optionally coordinate the panel with site navigation.
+`LinkComponent` accepts an app router's anchor adapter. `profile` supplies a name
+and email, shown only after account access is verified. For an existing portfolio
+reader, `renderSummary` can render `DexterAccountSummary` with its bound result,
+avoid a second read, and keep the shared presentation. `--dx-account-font` sets
+the panel font; `styleNonce` supports a site's inline-style policy.
+
+Device removal belongs in account management and is absent from this menu.
+
 ## Canonical React integration
 
 `useDexterConnection` is the controlled integration for a product header,
@@ -231,10 +279,8 @@ private login and browser-roster steps.
 
 ### Repair a missing Vault record
 
-`recoverMissingVaultForAccount` is exported by the 0.30.0 source on `main`.
-The published npm package is 0.29.1 and does not include this helper. Its
-[implementation](./src/missingVaultRecovery.ts) and
-[tests](./src/missingVaultRecovery.test.ts) are available for source review.
+Connect 0.31.0 includes `recoverMissingVaultForAccount`. Update older installations
+to use this recovery helper alongside the account panel.
 
 Use this only after the API reports `vault_not_found` for an existing account.
 The account holder must sign in to that same account again before starting the
