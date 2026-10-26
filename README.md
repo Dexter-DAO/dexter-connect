@@ -85,6 +85,10 @@ accounts clears the previous balance immediately. Wallet holdings are bound to
 `receiveAddress`, the asset address. `walletAddress` identifies the Swig control
 account and must not be used to match a portfolio.
 
+The account name opens its wallet. A compact control beneath it copies the
+selected receive address and confirms success after the clipboard accepts it.
+Both remain available when an app supplies its own `renderSummary`.
+
 Destinations open Dexter by default and carry the selected account. Dexter asks
 for confirmation if a different account is active there. `connection.connect({ userHandle })`
 targets that account's saved credential when available and checks the returned account

@@ -12,7 +12,7 @@ const balance = vi.hoisted(() => vi.fn(() => ({ amount: '$236.00', loading: fals
 vi.mock('./useAccountPortfolio', () => ({ useAccountPortfolio: balance }));
 vi.mock('framer-motion', async (original) => ({ ...await original<typeof import('framer-motion')>(), useReducedMotion: () => true }));
 let view: RenderHandle | undefined;
-afterEach(async () => { await view?.unmount(); view = undefined; vi.clearAllMocks(); });
+afterEach(async () => { await view?.unmount(); view = undefined; vi.clearAllMocks(); vi.unstubAllGlobals(); });
 
 function connection(ready = false): UseDexterConnection {
   return {
@@ -33,6 +33,9 @@ function button(label: string): HTMLButtonElement {
   return found;
 }
 async function open() { await click(button('Open Dexter account')); }
+function clipboard(writeText: ReturnType<typeof vi.fn>) {
+  vi.stubGlobal('navigator', Object.create(navigator, { clipboard: { value: { writeText }, configurable: true } }));
+}
 
  describe('shared account control', () => {
   it('ships its marks and styling without site asset paths, with one guest panel brand', async () => {
@@ -66,6 +69,108 @@ async function open() { await click(button('Open Dexter account')); }
     await click(button('Disconnect Dexter'));
     expect(c.disconnectDexter).toHaveBeenCalledTimes(1);
     expect(c.removeFromThisDevice).not.toHaveBeenCalled();
+  });
+
+  it('opens the selected wallet from the account name using the host link adapter', async () => {
+    const c = connection(true);
+    view = await render(<DexterAccountControl connection={c} LinkComponent={props => <a {...props} data-host-link="true"/>}/>);
+    await open();
+    const link = view.container.querySelector('h3 a')!;
+    expect(link.textContent).toBe('BranchWallet');
+    expect(link.getAttribute('data-host-link')).toBe('true');
+    expect(link.getAttribute('href')).toBe('https://dexter.cash/wallet?section=money&dexter_account=AAAAAAAAAAAAAAAAAAAAAA');
+    await click(link);
+    expect(button('Open Dexter account').getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('copies the receive address and reports success only after the clipboard accepts it', async () => {
+    let finish!: () => void;
+    const writeText = vi.fn(() => new Promise<void>(resolve => { finish = resolve; }));
+    clipboard(writeText);
+    const c = connection(true);
+    view = await render(<DexterAccountControl connection={c}/>);
+    await open();
+    expect(button('Copy receive address').textContent).toContain('So11…1112');
+    await click(button('Copy receive address'));
+    expect(writeText).toHaveBeenCalledExactlyOnceWith(c.activeWallet!.receiveAddress);
+    expect(writeText).not.toHaveBeenCalledWith(c.activeWallet!.walletAddress);
+    expect(button('Copy receive address').disabled).toBe(true);
+    expect(view.container.textContent).not.toContain('Copied');
+    await act(async () => finish());
+    expect(view.container.querySelector('.dx-account-copyFeedback')?.textContent).toBe('Copied');
+    expect(button('Copy receive address').disabled).toBe(false);
+  });
+
+  it.each(['switch', 'disconnect', 'verification loss'])('ignores an old clipboard completion after %s', async change => {
+    let finish!: () => void;
+    const writeText = vi.fn(() => new Promise<void>(resolve => { finish = resolve; }));
+    clipboard(writeText);
+    const c = connection(true);
+    view = await render(<DexterAccountControl connection={c}/>);
+    await open();
+    await click(button('Copy receive address'));
+    let next = connection();
+    if (change === 'switch') next = {
+      ...c,
+      identity: { ...c.identity, userHandle: 'BBBBBBBBBBBBBBBBBBBBBB', walletLabel: 'Other account' },
+      activeWallet: { ...c.activeWallet!, userHandle: 'BBBBBBBBBBBBBBBBBBBBBB', receiveAddress: 'SysvarRent111111111111111111111111111111111' },
+    };
+    if (change === 'verification loss') next = { ...c, model: { ...c.model, stage: 'checking', permissions: connection().model.permissions } };
+    await view!.rerender(<DexterAccountControl connection={next}/>);
+    await act(async () => finish());
+    expect(view!.container.textContent).not.toContain('Copied');
+    if (change === 'switch') {
+      expect(button('Copy receive address').title).toBe(next.activeWallet!.receiveAddress);
+      expect(view!.container.querySelector('h3 a')?.getAttribute('href')).toContain('dexter_account=BBBBBBBBBBBBBBBBBBBBBB');
+      expect(button('Copy receive address').disabled).toBe(false);
+    } else {
+      expect(view!.container.querySelector('.dx-account-copy')).toBeNull();
+      expect(view!.container.querySelector('h3 a')).toBeNull();
+    }
+  });
+
+  it.each(['Switch account', 'Disconnect Dexter'])('withdraws wallet header actions during %s', async action => {
+    const c = connection(true);
+    let finish!: () => void;
+    if (action === 'Switch account') c.useAnotherDexterWallet = vi.fn(() => new Promise<Awaited<ReturnType<UseDexterConnection['useAnotherDexterWallet']>>>(resolve => { finish = () => resolve({} as never); }));
+    else c.disconnectDexter = vi.fn(() => new Promise<boolean>(resolve => { finish = () => resolve(true); }));
+    view = await render(<DexterAccountControl connection={c}/>);
+    await open();
+    await click(button('Account settings'));
+    await click(button(action));
+    expect(view.container.querySelector('.dx-account-copy')).toBeNull();
+    expect(view.container.querySelector('h3 a')).toBeNull();
+    await act(async () => finish());
+  });
+
+  it('keeps clipboard failure distinct from success and lets the user retry', async () => {
+    const writeText = vi.fn().mockRejectedValueOnce(new Error('denied')).mockResolvedValue(undefined);
+    clipboard(writeText);
+    view = await render(<DexterAccountControl connection={connection(true)}/>);
+    await open();
+    await click(button('Copy receive address'));
+    expect(view.container.querySelector('.dx-account-copyFeedback')?.textContent).toBe('Copy failed. Try again.');
+    expect(view.container.textContent).not.toContain('Copied');
+    expect(button('Copy receive address').disabled).toBe(false);
+    await click(button('Copy receive address'));
+    expect(view.container.querySelector('.dx-account-copyFeedback')?.textContent).toBe('Copied');
+  });
+
+  it('reports an unavailable clipboard without claiming the address was copied', async () => {
+    vi.stubGlobal('navigator', Object.create(navigator, { clipboard: { value: undefined, configurable: true } }));
+    view = await render(<DexterAccountControl connection={connection(true)}/>);
+    await open();
+    await click(button('Copy receive address'));
+    expect(view.container.querySelector('.dx-account-copyFeedback')?.textContent).toBe('Copy failed. Try again.');
+    expect(view.container.textContent).not.toContain('Copied');
+  });
+
+  it('never substitutes the control address when the receive address is absent', async () => {
+    const c = connection(true);
+    view = await render(<DexterAccountControl connection={{ ...c, activeWallet: { ...c.activeWallet!, receiveAddress: null } }}/>);
+    await open();
+    expect(view.container.querySelector('.dx-account-copy')).toBeNull();
+    expect(view.container.querySelector('h3 a')).not.toBeNull();
   });
 
   it('finishes a newly created account through its targeted host sign-in', async () => {
@@ -129,8 +234,11 @@ async function open() { await click(button('Open Dexter account')); }
     view = await render(<DexterAccountControl connection={connection(true)} navigation={{ money: {href:'/money'}, send:false, profile:false }} />);
     await open();
     expect(view.container.querySelector('a[href="/money"]')).not.toBeNull();
+    expect(view.container.querySelector('h3 a')?.getAttribute('href')).toBe('/money');
     expect(view.container.querySelector('a[href$="/withdraw"]')).toBeNull();
     expect(view.container.querySelector('a[href$="/profile"]')).toBeNull();
+    await view.rerender(<DexterAccountControl connection={connection(true)} navigation={{ money: false }}/>);
+    expect(view.container.querySelector('h3 a')).toBeNull();
   });
 
   it('can use a host portfolio reader without making a second SDK request', async () => {
@@ -138,6 +246,8 @@ async function open() { await click(button('Open Dexter account')); }
     await open();
     expect(view.container.textContent).toContain('Host balance');
     expect(balance).not.toHaveBeenCalled();
+    expect(view.container.querySelector('h3 a')?.getAttribute('href')).toContain('dexter_account=AAAAAAAAAAAAAAAAAAAAAA');
+    expect(button('Copy receive address').title).toBe(connection(true).activeWallet!.receiveAddress);
   });
 
   it('has instance-specific IDs and restores focus after Escape', async () => {
