@@ -28,6 +28,24 @@ fresh passkey ceremony and replaces the active identity only after verification.
 Agent authority always requires a separate owner grant. Creating or connecting a
 Wallet grants no agent spending authority.
 
+## Interrupted wallet setup
+
+`createWallet()` retains the original passkey when setup is interrupted. Calling
+it again resumes that wallet, including after a page reload, and may ask the
+owner to confirm the saved passkey. The pending wallet becomes active after
+initialization succeeds. Its original name and authored allowance stay with it.
+
+If enrollment never reached the server and its challenge expires, a fresh
+passkey check can confirm that the saved credential has no server record.
+Connect then clears that pending setup and returns `enrollment_not_saved`.
+The next explicit Create action starts a new wallet. Network errors, generic
+404 responses, and server failures retain the pending setup for another retry.
+
+On another device, `recoverWallet()` can finish an enrolled passkey's missing
+wallet initialization after verifying that passkey. Recovery starts with zero
+agent spending allowance. Full sign-in also restores a missing wallet record
+while preserving the credential's existing account binding.
+
 ## Install
 
 ```bash
@@ -45,6 +63,54 @@ npm install @dexterai/connect @dexterai/vault react
 | `@dexterai/connect/react` | The canonical React control, hooks, and Dexter UI primitives |
 | `@dexterai/connect/server` | Local verification of Dexter account sessions |
 | `@dexterai/connect/worldid` | Optional World ID proof-of-personhood control |
+
+## Account panel
+
+`DexterAccountControl` provides Dexter's account menu: balance, Send and Receive,
+activity, connected apps, account switching, and connection settings. It uses the
+same `useDexterConnection` instance as the app. The panel includes its brand marks,
+styles, and motion; it inherits the host font and respects reduced motion.
+
+```tsx
+import { DexterAccountControl, type UseDexterConnection } from '@dexterai/connect/react';
+
+export function AccountEntry({ connection }: { connection: UseDexterConnection }) {
+  return <DexterAccountControl connection={connection} />;
+}
+```
+
+The panel reads the selected account's portfolio while open. Partial pricing is
+labeled Priced assets. A failed read displays Balance unavailable; switching
+accounts clears the previous balance immediately. Wallet holdings are bound to
+`receiveAddress`, the asset address. `walletAddress` identifies the Swig control
+account and must not be used to match a portfolio.
+
+Destinations open Dexter by default and carry the selected account. Dexter asks
+for that account's passkey if a different account is active there. Set `navigation` to use local app routes,
+or set an entry to `false` to hide it. `items` adds app-specific destinations with
+`requires: 'account'` or `requires: 'wallet'`; only verified access exposes them.
+The destination itself must enforce its own authorization.
+
+```tsx
+<DexterAccountControl
+  connection={connection}
+  navigation={{
+    money: { href: '/money' },
+    activity: { href: '/activity' },
+    profile: false,
+  }}
+  items={[{ id: 'seller', label: 'Your servers', href: '/servers', requires: 'account' }]}
+/>
+```
+
+`open` and `onOpenChange` optionally coordinate the panel with site navigation.
+`LinkComponent` accepts an app router's anchor adapter. `profile` supplies a name
+and email, shown only after account access is verified. For an existing portfolio
+reader, `renderSummary` can render `DexterAccountSummary` with its bound result,
+avoid a second read, and keep the shared presentation. `--dx-account-font` sets
+the panel font; `styleNonce` supports a site's inline-style policy.
+
+Device removal belongs in account management and is absent from this menu.
 
 ## Canonical React integration
 
@@ -213,10 +279,8 @@ private login and browser-roster steps.
 
 ### Repair a missing Vault record
 
-`recoverMissingVaultForAccount` is exported by the 0.30.0 source on `main`.
-The published npm package is 0.29.1 and does not include this helper. Its
-[implementation](./src/missingVaultRecovery.ts) and
-[tests](./src/missingVaultRecovery.test.ts) are available for source review.
+Connect 0.31.0 includes `recoverMissingVaultForAccount`. Update older installations
+to use this recovery helper alongside the account panel.
 
 Use this only after the API reports `vault_not_found` for an existing account.
 The account holder must sign in to that same account again before starting the
@@ -305,3 +369,29 @@ The server entry depends only on `jose`.
 ## License
 
 MIT
+
+### Private wallet activity
+
+Use the retained proof from the existing passkey ceremony for wallet activity and
+owner-operation status. The proof identifies the wallet; the server still verifies
+an exact operation assertion before any financial action. The request helper keeps
+proof material inside the SDK and only sends it to the canonical Dexter API.
+
+```ts
+import { fetchWithWalletIdentity, walletProofSessionStore } from '@dexterai/connect';
+
+const activeWallet = { userHandle, vaultPda };
+const wallet = walletProofSessionStore.bindingCandidate(userHandle, activeWallet);
+if (wallet) {
+  const response = await fetchWithWalletIdentity({
+    wallet,
+    activeWallet,
+    url: `/api/passkey-vault-anon/activity/v4?user_handle=${userHandle}`,
+  });
+}
+```
+
+Older device records can save `walletIdentityProof` returned after their normal
+verified owner-operation claim using `walletProofSessionStore.save(userHandle,
+walletIdentityProof)`. Preparation and the exact claim do not require a second
+passkey ceremony. A missing or expired proof does not authorize private reads.

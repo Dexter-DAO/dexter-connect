@@ -33,7 +33,7 @@ import {
   resolveAgentDelegationMode,
   resolveWalletStoreMode,
 } from './types';
-import { startRegistration } from '@simplewebauthn/browser';
+import { startRegistration, startAuthentication } from '@simplewebauthn/browser';
 import type {
   RegistrationResponseJSON,
   PublicKeyCredentialCreationOptionsJSON,
@@ -44,6 +44,8 @@ import { SESSION_TTL_30D } from './policy';
 import type { SpendPolicy } from './policy';
 import { readErrorCode } from './httpError';
 import { DEXTER_RP_ID, resolveDexterApiBase, resolveDexterRpId } from './trust';
+
+import { readPendingCreation, savePendingCreation, clearPendingCreation, type PendingCreation, type EnrolledCredential } from './pendingCreation';
 
 const DEFAULT_WALLET_NAME = 'Dexter Wallet';
 
@@ -93,6 +95,8 @@ export interface CreateWalletResult {
   walletIdentityProof: WalletIdentityProof;
 }
 
+let creationInProgress = false;
+
 /**
  * Mint a brand-new Dexter wallet (passkey + vault). Commit mode (the default)
  * makes it active immediately; provisional mode returns it without changing
@@ -101,7 +105,17 @@ export interface CreateWalletResult {
  * One passkey approval. Throws ConnectError on any failed leg (the `code` is the
  * server's error string, or webauthn_failed / no_credential for the ceremony).
  */
-export async function createWallet(
+export async function createWallet(config: CreateWalletConfig = {}): Promise<CreateWalletResult> {
+  if (creationInProgress) throw new ConnectError('wallet_creation_in_progress');
+  creationInProgress = true;
+  try {
+    return await createWalletOperation(config);
+  } finally {
+    creationInProgress = false;
+  }
+}
+
+async function createWalletOperation(
   config: CreateWalletConfig = {},
 ): Promise<CreateWalletResult> {
   // Validate before popup, fetch, or WebAuthn. Only the exact public modes are
@@ -148,6 +162,8 @@ export async function createWallet(
   if (typeof navigator === 'undefined' || !navigator.credentials) {
     throw new ConnectError('webauthn_unsupported', 'WebAuthn unavailable in this environment');
   }
+  const pending = readPendingCreation();
+  if (pending) return resumeCreation(apiBase, pending, walletStore, config.onPhase);
   const name = (config.name && config.name.trim()) || DEFAULT_WALLET_NAME;
 
   config.onPhase?.('challenge');
@@ -170,39 +186,133 @@ export async function createWallet(
   } catch (err) {
     throw new ConnectError('webauthn_failed', err instanceof Error ? err.message : String(err));
   }
+  const checkpoint: PendingCreation = {
+    version: 1,
+    credentialId: regResponse.id,
+    registration: regResponse,
+    name: config.name?.trim() || '',
+    ...(config.spendPolicy ? { spendPolicy: { ...config.spendPolicy } } : {}),
+  };
+  // Retain the created OS credential before the enrollment response can be lost.
+  // This record never makes the incomplete Wallet active.
+  savePendingCreation(checkpoint);
   config.onPhase?.('verifying');
   const enrolled = await submitEnrollComplete(apiBase, regResponse);
-  config.onPhase?.('finalizing');
-  const init = await initializeVault(
-    apiBase,
-    enrolled.userHandle,
-    enrolled.credentialId,
-    config.spendPolicy,
-    config.name?.trim() || undefined,
-  );
+  checkpoint.enrolled = enrolled;
+  savePendingCreation(checkpoint);
+  return finishCreation(apiBase, checkpoint, enrolled, walletStore, config.onPhase);
+}
 
+async function resumeCreation(
+  apiBase: string,
+  checkpoint: PendingCreation,
+  walletStore: WalletStoreMode,
+  onPhase?: (phase: CeremonyPhase) => void,
+): Promise<CreateWalletResult> {
+  let enrolled: EnrolledCredential;
+  // If the completion response was lost, its registration may still be usable.
+  // A consumed challenge falls through to a fresh proof from that same passkey.
+  if (!checkpoint.enrolled) {
+    try {
+      onPhase?.('verifying');
+      enrolled = await submitEnrollComplete(apiBase, checkpoint.registration);
+      checkpoint.enrolled = enrolled;
+      savePendingCreation(checkpoint);
+      return finishCreation(apiBase, checkpoint, enrolled, walletStore, onPhase);
+    } catch (error) {
+      if (!(error instanceof ConnectError)
+        || !['challenge_replayed', 'verification_failed'].includes(error.code)) throw error;
+    }
+  }
+  onPhase?.('challenge');
+  const challenge = await fetch(`${apiBase}/api/passkey-anon/sign/recover-challenge`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+  });
+  if (!challenge.ok) throw new ConnectError(await readErrorCode(challenge));
+  const { options } = await challenge.json();
+  resolveDexterRpId(options?.rpId);
+  onPhase?.('passkey');
+  let credential;
+  try {
+    credential = await startAuthentication({ optionsJSON: {
+      ...options,
+      allowCredentials: [{ id: checkpoint.credentialId, type: 'public-key' }],
+    } });
+  } catch (error) {
+    throw new ConnectError('webauthn_failed', error instanceof Error ? error.message : String(error));
+  }
+  if (credential.id !== checkpoint.credentialId) throw new ConnectError('creation_credential_mismatch');
+  onPhase?.('verifying');
+  const verification = await fetch(`${apiBase}/api/passkey-anon/sign/recover-verify`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ credential }),
+  });
+  if (!verification.ok) {
+    const code = await readErrorCode(verification);
+    // The fresh assertion names the exact saved credential. Only this explicit
+    // absence response permits a later, user-initiated creation to start anew.
+    // A transport error, generic 404, or server failure preserves the checkpoint.
+    if (verification.status === 404 && code === 'credential_not_found') {
+      clearPendingCreation(checkpoint.credentialId);
+      throw new ConnectError(
+        'enrollment_not_saved',
+        'Wallet setup was not saved. Start again to create your wallet.',
+      );
+    }
+    throw new ConnectError(code);
+  }
+  const verified = await verification.json();
+  if (verified.verified !== true || verified.credentialId !== checkpoint.credentialId
+    || (checkpoint.enrolled && verified.userHandle !== checkpoint.enrolled.userHandle)) {
+    throw new ConnectError('creation_credential_mismatch');
+  }
+  enrolled = {
+    userHandle: verified.userHandle,
+    credentialId: verified.credentialId,
+    publicKey: verified.publicKey ?? checkpoint.enrolled?.publicKey,
+    walletIdentityProof: parseWalletIdentityProof(verified.walletIdentityProof),
+  };
+  if (!enrolled.publicKey || !enrolled.userHandle) throw new ConnectError('recover_verify_malformed');
+  checkpoint.enrolled = enrolled;
+  savePendingCreation(checkpoint);
+  return finishCreation(apiBase, checkpoint, enrolled, walletStore, onPhase);
+}
+
+async function finishCreation(
+  apiBase: string,
+  checkpoint: PendingCreation,
+  enrolled: EnrolledCredential,
+  walletStore: WalletStoreMode,
+  onPhase?: (phase: CeremonyPhase) => void,
+): Promise<CreateWalletResult> {
+  onPhase?.('finalizing');
+  let init;
+  try {
+    init = await initializeVault(
+      apiBase, enrolled.userHandle, enrolled.credentialId,
+      checkpoint.spendPolicy, checkpoint.name || undefined, enrolled.walletIdentityProof,
+    );
+  } catch (error) {
+    throw new ConnectError(
+      error instanceof ConnectError ? error.code : 'initialize_failed',
+      'Your passkey is saved. Retry to finish setting up this wallet.',
+    );
+  }
   const vault: ConnectVault = {
     vaultPda: init.vaultPda,
     swigAddress: init.swigStateAddress,
-    // Never substitute the configuration PDA for a missing deposit address.
     receiveAddress: init.receiveAddress ?? null,
     usdcAta: null,
     publicKey: enrolled.publicKey,
     userHandle: enrolled.userHandle,
     credentialId: enrolled.credentialId,
-    walletLabel: init.walletLabel ?? config.name?.trim() ?? null,
+    walletLabel: init.walletLabel ?? (checkpoint.name || null),
   };
-
-  if (walletStore === 'commit') {
-    activateConnectVault(vault, enrolled.walletIdentityProof);
-  }
-
+  if (walletStore === 'commit') activateConnectVault(vault, enrolled.walletIdentityProof);
+  clearPendingCreation(enrolled.credentialId);
   return {
-    handle: enrolled.userHandle,
-    credentialId: enrolled.credentialId,
-    vault,
-    label: vault.walletLabel ?? null,
-    walletIdentityProof: enrolled.walletIdentityProof,
+    handle: enrolled.userHandle, credentialId: enrolled.credentialId, vault,
+    label: vault.walletLabel ?? null, walletIdentityProof: enrolled.walletIdentityProof,
   };
 }
 
@@ -250,6 +360,10 @@ async function submitEnrollComplete(
     userHandle: string;
     walletIdentityProof?: unknown;
   };
+  if (data.credentialId !== response.id || typeof data.userHandle !== 'string'
+    || !data.userHandle || typeof data.publicKey !== 'string' || !data.publicKey) {
+    throw new ConnectError('enroll_complete_malformed');
+  }
   return {
     credentialId: data.credentialId,
     publicKey: data.publicKey,
@@ -264,6 +378,7 @@ async function initializeVault(
   credentialId: string,
   spendPolicy?: SpendPolicy,
   label?: string,
+  walletIdentityProof?: WalletIdentityProof,
 ): Promise<{
   vaultPda: string;
   receiveAddress: string | null;
@@ -284,7 +399,7 @@ async function initializeVault(
   }
   const res = await fetch(`${apiBase}/api/passkey-vault-anon/initialize`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...(walletIdentityProof ? { authorization: `Bearer ${walletIdentityProof.token}` } : {}) },
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new ConnectError(await readErrorCode(res), `initialize ${res.status}`);

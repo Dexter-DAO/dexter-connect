@@ -39,6 +39,10 @@ export interface CreateWalletPanelProps {
   agentDelegation?: AgentDelegationMode;
   /** Extra className composed after the brand classes. */
   className?: string;
+  /** Account wording for the shared account control; wallet remains compatible. */
+  terminology?: 'wallet' | 'account';
+  /** Hide when the containing panel already carries Dexter's mark. */
+  withMark?: boolean;
 }
 
 const FINE_PRINT =
@@ -54,7 +58,10 @@ export function CreateWalletPanel(props: CreateWalletPanelProps): ReactElement {
     showName = true,
     agentDelegation = 'deferred',
     className,
+    terminology = 'wallet',
+    withMark = true,
   } = props;
+  const account = terminology === 'account';
   useEffect(ensureConsentStyles, []);
   useEffect(ensureDexterButtonStyles, []);
   const nameInputId = useId();
@@ -86,9 +93,9 @@ export function CreateWalletPanel(props: CreateWalletPanelProps): ReactElement {
       ? ceremonyPhaseLabel(phase)
       : 'Starting your passkey…'
     : resolvedTransport === 'unknown'
-      ? 'Preparing wallet setup…'
+      ? account ? 'Preparing account setup...' : 'Preparing wallet setup…'
       : hosted
-        ? 'Wallet setup continues in Dexter Wallet.'
+        ? account ? 'Account setup continues in Dexter.' : 'Wallet setup continues in Dexter Wallet.'
         : ownerOnly
           ? ''
           : policy
@@ -108,7 +115,7 @@ export function CreateWalletPanel(props: CreateWalletPanelProps): ReactElement {
     setPhase(null);
     try {
       const result = await createWallet({
-        name: hosted ? undefined : name.trim() || 'Dexter Wallet',
+        name: hosted ? undefined : name.trim() || (account ? 'Dexter account' : 'Dexter Wallet'),
         spendPolicy: hosted ? undefined : policy ?? undefined,
         agentDelegation,
         apiBase,
@@ -134,13 +141,13 @@ export function CreateWalletPanel(props: CreateWalletPanelProps): ReactElement {
       {!hosted && resolvedTransport === 'inline' && showName && (
         <div className="dx-cwp__field">
           <label className="dx-cwp__label" htmlFor={nameInputId}>
-            Name your wallet
+            {account ? 'Account name' : 'Name your wallet'}
           </label>
           <input
             id={nameInputId}
             className="dx-cwp__name"
             maxLength={40}
-            placeholder="Dexter Wallet"
+            placeholder={account ? 'Dexter account' : 'Dexter Wallet'}
             value={name}
             disabled={running}
             autoComplete="off"
@@ -151,7 +158,7 @@ export function CreateWalletPanel(props: CreateWalletPanelProps): ReactElement {
 
       {hosted ? (
         <p className="dx-cwp__hosted">
-          {ownerOnly
+          {account ? 'Finish setup in Dexter.' : ownerOnly
             ? 'Finish setup in Dexter Wallet.'
             : 'Choose a name and agent allowance in Dexter Wallet.'}
         </p>
@@ -181,6 +188,7 @@ export function CreateWalletPanel(props: CreateWalletPanelProps): ReactElement {
 
       <DexterButton
         block
+        withMark={withMark}
         className="dx-cwp__cta"
         loading={running}
         loadingLabel={phase ? ceremonyPhaseLabel(phase) : 'Creating…'}
@@ -190,8 +198,8 @@ export function CreateWalletPanel(props: CreateWalletPanelProps): ReactElement {
         {error
           ? 'Retry'
           : hosted
-            ? 'Continue to Dexter Wallet'
-            : 'Create your Dexter Wallet'}
+            ? account ? 'Continue to Dexter' : 'Continue to Dexter Wallet'
+            : account ? 'Create account' : 'Create your Dexter Wallet'}
       </DexterButton>
     </div>
   );

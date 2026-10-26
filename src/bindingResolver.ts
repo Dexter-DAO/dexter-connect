@@ -139,6 +139,47 @@ export type BindingFetch = (
   init?: RequestInit,
 ) => Promise<Response>;
 
+export interface WalletIdentityFetchInput {
+  readonly wallet: WalletBindingCandidate;
+  readonly activeWallet: ActiveWalletBindingIdentity;
+  readonly url: string | URL;
+  readonly init?: RequestInit;
+  readonly fetch?: BindingFetch;
+}
+
+/** Send the retained identity proof to Dexter without exposing its token.
+ * Identity permits wallet reads; each financial action still requires its
+ * own authorization. Redirects cannot forward the proof to another origin. */
+export async function fetchWithWalletIdentity(input: WalletIdentityFetchInput): Promise<Response> {
+  const material = walletBindings.get(input.wallet);
+  const active = requireActiveWalletIdentity(input.activeWallet);
+  if (!material || material.activeWallet.userHandle !== active.userHandle ||
+      material.activeWallet.vaultPda !== active.vaultPda) {
+    throw new ConnectError('wallet_identity_mismatch');
+  }
+  const apiBase = resolveDexterApiBase();
+  let url: URL;
+  try { url = new URL(input.url, apiBase); }
+  catch { throw new ConnectError('invalid_wallet_request_url'); }
+  if (url.origin !== apiBase || url.username || url.password || url.hash || !url.pathname.startsWith('/api/')) {
+    throw new ConnectError('invalid_wallet_request_url');
+  }
+  const queryHandle = url.searchParams.getAll('user_handle');
+  if (queryHandle.length > 1 || (queryHandle.length === 1 && queryHandle[0] !== active.userHandle)) {
+    throw new ConnectError('wallet_identity_mismatch');
+  }
+  const headers = new Headers(input.init?.headers);
+  if (headers.has('authorization') || headers.has('x-dexter-wallet-proof') ||
+      (headers.has('x-dexter-owner-handle') && headers.get('x-dexter-owner-handle') !== active.userHandle)) {
+    throw new ConnectError('wallet_identity_mismatch');
+  }
+  headers.set('X-Dexter-Wallet-Proof', material.identityProof);
+  headers.set('X-Dexter-Owner-Handle', active.userHandle);
+  const fetchImpl = input.fetch ?? globalFetch();
+  if (!fetchImpl) throw new ConnectError('fetch_unavailable');
+  return fetchImpl(url.href, { ...input.init, headers, redirect: 'error', credentials: 'omit' });
+}
+
 export interface WalletAccountBindingClientConfig {
   /** Compatibility option; only the canonical Dexter API origin is accepted. */
   readonly apiBase?: string;

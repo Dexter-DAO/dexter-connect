@@ -5,6 +5,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // via mocked fetch — asserting the /initialize body the SDK actually POSTs.
 vi.mock('@simplewebauthn/browser', () => ({
   startRegistration: vi.fn(),
+  startAuthentication: vi.fn(),
 }));
 
 // Popup transport mocked at the boundary so the third-party-origin create path
@@ -33,6 +34,15 @@ import { ConnectError } from './types';
 import { startRegistration } from '@simplewebauthn/browser';
 import { openCeremonyPopup } from './popup';
 import { setActiveWallet } from './walletStore';
+
+beforeEach(() => {
+  const values = new Map<string, string>();
+  vi.stubGlobal('window', { localStorage: {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value),
+    removeItem: (key: string) => values.delete(key),
+  } });
+});
 
 const mockStartReg = vi.mocked(startRegistration);
 const mockPopup = vi.mocked(openCeremonyPopup);

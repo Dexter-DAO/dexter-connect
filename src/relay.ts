@@ -31,6 +31,8 @@ import {
 } from './immediate';
 import { resolveDexterApiBase, resolveDexterRpId } from './trust';
 
+import { clearPendingCreation } from './pendingCreation';
+
 const ANON_SIGN_BASE = '/api/passkey-anon/sign';
 
 // Settle the immediate-mode capability probe at module load so continue's
@@ -94,6 +96,7 @@ export async function passkeyLogin(
   if (walletStore === 'commit') {
     activateConnectVault(result.vault, result.walletIdentityProof);
   }
+  clearPendingCreation(result.vault.credentialId);
   return result;
 }
 

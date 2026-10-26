@@ -48,6 +48,13 @@ export type { AllowanceChipsProps } from './AllowanceChips';
 export { CreateWalletPanel } from './CreateWalletPanel';
 export type { CreateWalletPanelProps } from './CreateWalletPanel';
 
+export { DexterAccountControl } from './DexterAccountControl';
+export type { DexterAccountControlProps } from './DexterAccountControl';
+export { DexterAccountSummary } from './DexterAccountSummary';
+export type { DexterAccountSummaryProps } from './DexterAccountSummary';
+export { DEFAULT_ACCOUNT_NAVIGATION } from './accountNavigation';
+export type { AccountDestination, AccountNavigation, AccountMenuItem, AccountLinkComponent } from './accountNavigation';
+
 export {
   AppInstallButtons,
   claudeWebConnectorUrl,
