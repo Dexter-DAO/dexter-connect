@@ -50,6 +50,7 @@ export {
   walletBindingCandidate,
   accountBindingCandidate,
   createWalletAccountBindingClient,
+  fetchWithWalletIdentity,
 } from './bindingResolver';
 export type {
   ResolvedWalletAccountRelation,
@@ -58,6 +59,7 @@ export type {
   BindingResolutionResult,
   ResolveWalletAccountBindingInput,
   BindingFetch,
+  WalletIdentityFetchInput,
   WalletAccountBindingClientConfig,
   WalletAccountBindingClient,
 } from './bindingResolver';

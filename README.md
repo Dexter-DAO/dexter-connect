@@ -28,6 +28,24 @@ fresh passkey ceremony and replaces the active identity only after verification.
 Agent authority always requires a separate owner grant. Creating or connecting a
 Wallet grants no agent spending authority.
 
+## Interrupted wallet setup
+
+`createWallet()` retains the original passkey when setup is interrupted. Calling
+it again resumes that wallet, including after a page reload, and may ask the
+owner to confirm the saved passkey. The pending wallet becomes active after
+initialization succeeds. Its original name and authored allowance stay with it.
+
+If enrollment never reached the server and its challenge expires, a fresh
+passkey check can confirm that the saved credential has no server record.
+Connect then clears that pending setup and returns `enrollment_not_saved`.
+The next explicit Create action starts a new wallet. Network errors, generic
+404 responses, and server failures retain the pending setup for another retry.
+
+On another device, `recoverWallet()` can finish an enrolled passkey's missing
+wallet initialization after verifying that passkey. Recovery starts with zero
+agent spending allowance. Full sign-in also restores a missing wallet record
+while preserving the credential's existing account binding.
+
 ## Install
 
 ```bash
@@ -305,3 +323,29 @@ The server entry depends only on `jose`.
 ## License
 
 MIT
+
+### Private wallet activity
+
+Use the retained proof from the existing passkey ceremony for wallet activity and
+owner-operation status. The proof identifies the wallet; the server still verifies
+an exact operation assertion before any financial action. The request helper keeps
+proof material inside the SDK and only sends it to the canonical Dexter API.
+
+```ts
+import { fetchWithWalletIdentity, walletProofSessionStore } from '@dexterai/connect';
+
+const activeWallet = { userHandle, vaultPda };
+const wallet = walletProofSessionStore.bindingCandidate(userHandle, activeWallet);
+if (wallet) {
+  const response = await fetchWithWalletIdentity({
+    wallet,
+    activeWallet,
+    url: `/api/passkey-vault-anon/activity/v4?user_handle=${userHandle}`,
+  });
+}
+```
+
+Older device records can save `walletIdentityProof` returned after their normal
+verified owner-operation claim using `walletProofSessionStore.save(userHandle,
+walletIdentityProof)`. Preparation and the exact claim do not require a second
+passkey ceremony. A missing or expired proof does not authorize private reads.

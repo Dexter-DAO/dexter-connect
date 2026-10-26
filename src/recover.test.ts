@@ -214,18 +214,30 @@ describe('recoverWallet — inline leg', () => {
     expect(mockImmediateAuth).not.toHaveBeenCalled();
   });
 
-  it('credential verified but no vault → error vault_not_found, nothing persisted (donor-quirk fix)', async () => {
+  it('finishes a verified credential without a Vault using its original identity and no spending policy', async () => {
     const fetchMock = mockCeremonyFetch({
       status: { ok: true, json: async () => ({ enrolled: true, hasVault: false, vault: null }) },
-    });
+    }).mockResolvedValueOnce({ ok: true, json: async () => ({
+      vaultPda: 'original-vault', swigStateAddress: 'original-swig', receiveAddress: 'original-receive',
+    }) });
     vi.stubGlobal('fetch', fetchMock);
 
     const out = await recoverWallet({ transport: 'inline' });
-    expect(out.ok).toBe(false);
-    if (!out.ok) {
-      expect(out.reason).toBe('error');
-      expect(out.error?.code).toBe('vault_not_found');
-    }
+    expect(out).toMatchObject({ ok: true, userHandle: 'handle-xyz', vault: { vaultPda: 'original-vault', isActivated: false } });
+    expect(fetchMock.mock.calls[3][0]).toContain('/passkey-vault-anon/initialize');
+    const request = fetchMock.mock.calls[3][1];
+    expect(JSON.parse(request.body)).toEqual({ userHandle: 'handle-xyz', credentialId: 'cred-abc' });
+    expect(request.headers.authorization).toBe('Bearer wallet-proof');
+    expect(mockSetActiveWallet).toHaveBeenCalledWith(expect.objectContaining({ handle: 'handle-xyz', vaultPda: 'original-vault' }));
+  });
+
+  it('keeps a recovered credential inactive when resumed initialization fails', async () => {
+    const fetchMock = mockCeremonyFetch({
+      status: { ok: true, json: async () => ({ enrolled: true, hasVault: false, vault: null }) },
+    }).mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({ error: 'initialize_failed' }) });
+    vi.stubGlobal('fetch', fetchMock);
+    const out = await recoverWallet({ transport: 'inline' });
+    expect(out).toMatchObject({ ok: false, reason: 'error', error: { code: 'initialize_failed' } });
     expect(mockSetActiveWallet).not.toHaveBeenCalled();
   });
 
