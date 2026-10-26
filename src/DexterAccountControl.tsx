@@ -70,6 +70,7 @@ export function DexterAccountControl({ connection: dexter, open: controlledOpen,
   const finishCreation = Boolean(createdHandle && !permissions.accountContentVisible);
   const needsConnection = ['connect', 'repair', 'offline', 'error'].includes(dexter.model.stage);
   const links = resolveAccountNavigation(navigation, dexter.activeWallet);
+  const headerWallet = canOpenWallet && !busy && dexter.activeWallet?.userHandle ? dexter.activeWallet : null;
   const close = () => changeOpen.current(false);
 
   useEffect(() => setReady(true), []);
@@ -147,8 +148,15 @@ export function DexterAccountControl({ connection: dexter, open: controlledOpen,
         onAnimationComplete={() => {
           if (isOpen.current && document.activeElement === trigger.current) panel.current?.querySelector<HTMLElement>('button:not(:disabled), a[href]')?.focus();
         }}>
-        <div className="dx-account-identity"><AccountFace/><div><h3 id={`${id}-title`}>{title}</h3>
-          {(checking || email) && <p>{checking ? 'Opening your account...' : email}</p>}</div></div>
+        <div className="dx-account-identity"><AccountFace/><div><h3 id={`${id}-title`}>
+          {headerWallet && links.money ? <LinkComponent href={links.money.href} onClick={close} title="Open wallet">{title}</LinkComponent> : title}
+        </h3>
+          {(checking || email) && <p>{checking ? 'Opening your account...' : email}</p>}
+          {headerWallet?.receiveAddress && <ReceiveAddressCopy
+            key={`${headerWallet.userHandle}:${headerWallet.vaultPda}:${headerWallet.receiveAddress}`}
+            address={headerWallet.receiveAddress}
+          />}
+        </div></div>
         {checking ? <p className="dx-account-status" role="status">Checking your connection...</p> : <>
           {canCreate && createOpen ? <div className="dx-account-creation">
             <button type="button" className="dx-account-back" onClick={() => setCreateOpen(false)}>Back to sign in</button>
@@ -192,6 +200,40 @@ export function DexterAccountControl({ connection: dexter, open: controlledOpen,
         {error && <p className="dx-account-error" role="alert">{error}</p>}
       </motion.section>}
     </AnimatePresence>
+  </div>;
+}
+
+function ReceiveAddressCopy({ address }: { address: string }) {
+  const [status, setStatus] = useState<'idle' | 'copying' | 'copied' | 'error'>('idle');
+  const mounted = useRef(false);
+  const pending = useRef(false);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  const copy = async () => {
+    if (pending.current) return;
+    pending.current = true;
+    setStatus('copying');
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+      await navigator.clipboard.writeText(address);
+      if (mounted.current) setStatus('copied');
+    } catch {
+      if (mounted.current) setStatus('error');
+    } finally {
+      pending.current = false;
+    }
+  };
+  const compact = address.length > 12 ? `${address.slice(0, 4)}…${address.slice(-4)}` : address;
+  return <div className="dx-account-address">
+    <button type="button" className="dx-account-copy" aria-label="Copy receive address" title={address}
+      disabled={status === 'copying'} aria-busy={status === 'copying'} onClick={() => void copy()}>
+      <span>{compact}</span>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        {status === 'copied' ? <path d="m5 12 4 4L19 6"/> : <><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M15 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h3"/></>}
+      </svg>
+    </button>
+    <span className="dx-account-copyFeedback" role="status" aria-live="polite">
+      {status === 'copied' ? 'Copied' : status === 'error' ? 'Copy failed. Try again.' : ''}
+    </span>
   </div>;
 }
 
