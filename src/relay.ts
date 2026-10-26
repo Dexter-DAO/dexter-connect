@@ -12,6 +12,7 @@ import {
   parseWalletIdentityProof,
   resolveAgentDelegationMode,
   resolveWalletStoreMode,
+  resolveTargetUserHandle,
 } from './types';
 import { startAuthentication, browserSupportsWebAuthn } from '@simplewebauthn/browser';
 import type {
@@ -20,7 +21,7 @@ import type {
 } from '@simplewebauthn/browser';
 import { shouldUsePopup, openCeremonyPopup } from './popup';
 import { createWallet, type CreateWalletConfig, type CreateWalletResult } from './enroll';
-import { getActiveHandle } from './walletStore';
+import { getActiveHandle, getCredentialId } from './walletStore';
 import { activateConnectVault } from './walletActivation';
 import { readErrorCode } from './httpError';
 import {
@@ -59,15 +60,18 @@ export async function passkeyLogin(
 ): Promise<SignInResult> {
   const apiBase = resolveDexterApiBase(config.apiBase);
   const walletStore = resolveWalletStoreMode(config.walletStore);
+  const targetUserHandle = resolveTargetUserHandle(config.targetUserHandle);
   // Hosted-popup transport: on any non-Dexter origin, run the ceremony in a
   // popup on dexter.cash and get the same result back (works on any website).
   if (shouldUsePopup(config.transport)) {
     const result = normalizeSignInResult(
       await openCeremonyPopup<SignInResult>('signin', {
         connectHost: config.connectHost,
+        ...(targetUserHandle ? { targetUserHandle } : {}),
         ...(walletStore === 'provisional' ? { walletStore } : {}),
       }),
     );
+    assertTargetAccount(result, targetUserHandle);
     // Commit mode preserves the historical active-wallet behavior. A
     // provisional caller receives the same verified result with zero store
     // writes on either origin, then explicitly commits after approval.
@@ -81,23 +85,34 @@ export async function passkeyLogin(
   }
   onPhase?.('challenge');
   const options = await fetchLoginChallenge(apiBase);
+  const credentialId = targetUserHandle ? getCredentialId(targetUserHandle) : undefined;
+  const targetedOptions = credentialId
+    ? { ...options, allowCredentials: [{ id: credentialId, type: 'public-key' as const }] }
+    : options;
   onPhase?.('passkey');
   // SimpleWebAuthn runs the get() ceremony + all the base64url/ArrayBuffer
   // marshalling and returns server-ready JSON. (Replaces hand-rolled getAssertion.)
   let response: AuthenticationResponseJSON;
   try {
-    response = await startAuthentication({ optionsJSON: options });
+    response = await startAuthentication({ optionsJSON: targetedOptions });
   } catch (err) {
     throw new ConnectError('webauthn_failed', err instanceof Error ? err.message : String(err));
   }
   onPhase?.('verifying');
   const result = await submitLogin(apiBase, response);
+  assertTargetAccount(result, targetUserHandle);
   // Persist a successful inline sign-in only in commit mode.
   if (walletStore === 'commit') {
     activateConnectVault(result.vault, result.walletIdentityProof);
   }
   clearPendingCreation(result.vault.credentialId);
   return result;
+}
+
+function assertTargetAccount(result: SignInResult, expected: string | undefined): void {
+  if (expected && result.vault.userHandle !== expected) {
+    throw new ConnectError('target_account_mismatch', 'The selected passkey belongs to a different account.');
+  }
 }
 
 // ── Hybrid "continue" — register-or-sign-in in one call ──────────────────────

@@ -23,6 +23,7 @@ export {
 } from './useDexterConnection';
 export type {
   DexterConnectionOperation,
+  DexterConnectionTarget,
   DexterIdentityView,
   DexterWalletView,
   RemoveDexterFromDeviceConfirmation,

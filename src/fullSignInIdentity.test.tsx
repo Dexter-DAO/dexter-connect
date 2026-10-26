@@ -132,7 +132,12 @@ function createFetch(bindingRelation: 'bound' | 'conflict' = 'bound') {
 }
 
 describe('canonical full Dexter identity transition', () => {
-  it('moves A/A to B/B without exposing a mixed identity', async () => {
+  it.each([false, true])('moves A/A to B/B without exposing a mixed identity (targeted=%s)', async targeted => {
+    if (targeted) {
+      const previous = getActiveWallet()!;
+      setActiveWallet({ handle: HANDLE_B, credentialId: 'credential-b', vaultPda: VAULT_B });
+      setActiveWallet(previous);
+    }
     const fetchMock = createFetch();
     vi.stubGlobal('fetch', fetchMock);
     const observations: Observation[] = [];
@@ -180,10 +185,11 @@ describe('canonical full Dexter identity transition', () => {
     observations.length = 0;
 
     await act(async () => {
-      await connection.useAnotherDexterWallet();
+      await connection.useAnotherDexterWallet(targeted ? { userHandle: HANDLE_B } : undefined);
     });
     await flush();
 
+    if (targeted) expect(mockStartAuthentication).toHaveBeenCalledWith({ optionsJSON: { challenge: 'challenge', rpId: 'dexter.cash', allowCredentials: [{ id: 'credential-b', type: 'public-key' }] } });
     expect(getActiveWallet()?.handle).toBe(HANDLE_B);
     expect(connection.relation.relation).toBe('bound');
     expect(connection.identity).toMatchObject({

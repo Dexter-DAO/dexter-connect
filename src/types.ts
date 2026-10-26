@@ -212,6 +212,8 @@ export interface RecoverWalletConfig extends DexterConnectConfig {
 
 /** Configuration for `passkeyLogin`. */
 export interface PasskeyLoginConfig extends DexterConnectConfig {
+  /** Target a known account; use its saved credential and verify the returned identity. */
+  targetUserHandle?: string;
   /**
    * Wallet-store behavior after a successful passkey ceremony. Defaults to
    * `commit` for backward compatibility. Use `provisional` when the returned
@@ -239,6 +241,13 @@ export interface DexterConnectConfig {
   transport?: 'auto' | 'popup' | 'inline';
   /** Hosted ceremony page (popup transport). Default https://dexter.cash/connect. */
   connectHost?: string;
+}
+
+/** Account context narrows a ceremony; it never supplies authentication. */
+export function resolveTargetUserHandle(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value === 'string' && /^[A-Za-z0-9_-]{22}$/.test(value)) return value;
+  throw new ConnectError('invalid_target_account');
 }
 
 /** Runtime guard for JavaScript callers and hosted-popup query parsing. */

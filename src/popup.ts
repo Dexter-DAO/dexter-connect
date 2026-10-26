@@ -95,6 +95,7 @@ export function openCeremonyPopup<T>(
     name?: string;
     preferImmediate?: boolean;
     walletStore?: WalletStoreMode;
+    targetUserHandle?: string;
     agentDelegation?: AgentDelegationMode;
     signRequest?: HostedSignRequestPayload;
     /**
@@ -132,6 +133,7 @@ export function openCeremonyPopup<T>(
 
   const params = new URLSearchParams({ v: '1', op, requestId, origin: openerOrigin });
   if (config.name) params.set('name', config.name);
+  if (config.targetUserHandle) params.set('targetUserHandle', config.targetUserHandle);
   if (config.preferImmediate) params.set('preferImmediate', '1');
   if (walletStore === 'provisional') params.set('walletStore', 'provisional');
   if (agentDelegation) params.set('agentDelegation', agentDelegation);

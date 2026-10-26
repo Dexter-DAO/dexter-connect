@@ -86,7 +86,10 @@ accounts clears the previous balance immediately. Wallet holdings are bound to
 account and must not be used to match a portfolio.
 
 Destinations open Dexter by default and carry the selected account. Dexter asks
-for that account's passkey if a different account is active there. Set `navigation` to use local app routes,
+for confirmation if a different account is active there. `connection.connect({ userHandle })`
+targets that account's saved credential when available and checks the returned account
+before changing sessions. A device without that saved credential uses its passkey picker.
+Set `navigation` to use local app routes,
 or set an entry to `false` to hide it. `items` adds app-specific destinations with
 `requires: 'account'` or `requires: 'wallet'`; only verified access exposes them.
 The destination itself must enforce its own authorization.
