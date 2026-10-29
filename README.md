@@ -367,7 +367,7 @@ import { VerifyPersonhood } from '@dexterai/connect/worldid';
 | Peer | Required | Purpose |
 |---|---|---|
 | `react` >=18 | yes | React and World ID entry points |
-| `@dexterai/vault` ^0.43 | yes | Wallet signer and governed authority messages |
+| `@dexterai/vault` ^0.43 \|\| ^0.44 | yes | Wallet signer and governed authority messages |
 | `@solana/web3.js` | optional | Passkey and agent signing paths |
 | `@worldcoin/idkit` | optional | World ID controls |
 
