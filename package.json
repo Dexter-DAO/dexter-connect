@@ -1,8 +1,9 @@
 {
   "name": "@dexterai/connect",
-  "version": "0.31.2",
+  "version": "0.31.3",
   "description": "Connect apps and agents to a self-custodial Dexter Wallet with passkey identity, governed authority, hosted signing, and verifiable sessions.",
   "type": "module",
+  "packageManager": "npm@10.9.3",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -35,7 +36,7 @@
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {
-    "@dexterai/vault": "^0.43.0",
+    "@dexterai/vault": "^0.43.0 || ^0.44.0",
     "@solana/web3.js": "^1.98.0",
     "@worldcoin/idkit": "^4.1.8",
     "react": ">=18"
@@ -49,7 +50,7 @@
     }
   },
   "devDependencies": {
-    "@dexterai/vault": "0.43.9",
+    "@dexterai/vault": "0.44.0",
     "@solana/web3.js": "^1.98.4",
     "@types/react": "^19.1.12",
     "@types/react-dom": "^19.2.3",
