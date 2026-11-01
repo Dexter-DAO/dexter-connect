@@ -12,6 +12,7 @@ import { startAuthentication, startRegistration } from '@simplewebauthn/browser'
 import { enrollAccountIdentity, signInAccountIdentity } from './accountIdentity';
 import { openCeremonyPopup } from './popup';
 import { bytesToBase64, bytesToBase64url } from './base64';
+import { ConnectError } from './types';
 
 const userHandle = bytesToBase64url(new Uint8Array(16).fill(1));
 const otherHandle = bytesToBase64url(new Uint8Array(16).fill(2));
@@ -119,12 +120,13 @@ describe('new Account credential identity', () => {
       ...result, credential: { ...result.credential, credentialId: bytesToBase64url(new Uint8Array(32).fill(6)) },
     });
     await expect(operation === 'signin' ? signInAccountIdentity() : enrollAccountIdentity())
-      .rejects.toMatchObject({ code: 'account_identity_credential_mismatch' });
+      .rejects.toMatchObject({ code: operation === 'signin'
+        ? 'account_identity_credential_mismatch' : 'account_identity_request_uncertain' });
   });
 
   it('rejects enrollment under a handle different from the registration challenge', async () => {
     setupFetch(enrollChallenge, { ...result, credential: { ...result.credential, userHandle: otherHandle } });
-    await expect(enrollAccountIdentity()).rejects.toMatchObject({ code: 'account_identity_credential_mismatch' });
+    await expect(enrollAccountIdentity()).rejects.toMatchObject({ code: 'account_identity_request_uncertain' });
   });
 
   it.each([
@@ -181,6 +183,60 @@ describe('new Account credential identity', () => {
     await expect(enrollAccountIdentity()).rejects.toMatchObject({ code: 'account_identity_request_uncertain' });
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(startRegistration).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['invalid JSON', () => new Response('{', { status: 201 })],
+    ['missing session', () => response({ profile: result.profile, credential: result.credential })],
+    ['malformed credential', () => response({ ...result, credential: { ...result.credential, publicKey: 'AA==' } })],
+    ['wrong binding', () => response({ ...result, credential: { ...result.credential, userHandle: otherHandle } })],
+    ['server failure', () => new Response(JSON.stringify({ error: 'internal_error' }), { status: 500 })],
+    ['unreadable server failure', () => new Response('Bad Gateway', { status: 502 })],
+  ])('preserves enrollment uncertainty after a %s response without another creation', async (_label, reply) => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(response(enrollChallenge)).mockResolvedValueOnce(reply());
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(enrollAccountIdentity()).rejects.toMatchObject({ code: 'account_identity_request_uncertain' });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(startRegistration).toHaveBeenCalledTimes(1);
+    expect(startAuthentication).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [400, 'account_identity_verification_failed'],
+    [409, 'challenge_unavailable'],
+    [409, 'credential_changed'],
+    [409, 'credential_exists'],
+  ])('preserves the definite %s / %s response for the host recovery choice', async (status, code) => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(response(enrollChallenge))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: code }), { status }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(enrollAccountIdentity()).rejects.toMatchObject({ code });
+    expect(startRegistration).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('treats an unknown enrollment response as uncertain instead of assuming a failed creation', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(response(enrollChallenge))
+      .mockResolvedValueOnce(new Response('unreadable', { status: 400 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(enrollAccountIdentity()).rejects.toMatchObject({ code: 'account_identity_request_uncertain' });
+  });
+
+  it('preserves uncertainty when the hosted result is unreadable or its window is lost', async () => {
+    vi.mocked(openCeremonyPopup).mockResolvedValueOnce({ profile: result.profile });
+    await expect(enrollAccountIdentity({ transport: 'popup' })).rejects.toMatchObject({ code: 'account_identity_request_uncertain' });
+    for (const code of ['popup_closed', 'popup_timeout', 'popup_handshake_failed']) {
+      vi.mocked(openCeremonyPopup).mockRejectedValueOnce(new ConnectError(code));
+      await expect(enrollAccountIdentity({ transport: 'popup' })).rejects.toMatchObject({ code: 'account_identity_request_uncertain' });
+    }
+    expect(startRegistration).not.toHaveBeenCalled();
+  });
+
+  it('keeps a blocked popup and known existing credential distinct from uncertainty', async () => {
+    for (const code of ['popup_blocked', 'credential_exists']) {
+      vi.mocked(openCeremonyPopup).mockRejectedValueOnce(new ConnectError(code));
+      await expect(enrollAccountIdentity({ transport: 'popup' })).rejects.toMatchObject({ code });
+    }
   });
 
   it('snapshots the requested identity and rejects overlapping ceremonies', async () => {

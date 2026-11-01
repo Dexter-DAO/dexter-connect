@@ -115,9 +115,36 @@ async function post(apiBase: string, endpoint: string, body: unknown): Promise<u
     throw new ConnectError(endpoint === 'login' || endpoint === 'enroll'
       ? 'account_identity_request_uncertain' : 'account_identity_unavailable');
   }
-  if (!response.ok) throw new ConnectError(await readErrorCode(response));
+  if (!response.ok) {
+    const code = await readErrorCode(response);
+    if (endpoint === 'enroll' && !(
+      (response.status === 400 && code === 'account_identity_verification_failed') ||
+      (response.status === 409 && ['challenge_unavailable', 'credential_exists', 'credential_changed'].includes(code))
+    )) {
+      throw new ConnectError('account_identity_request_uncertain');
+    }
+    throw new ConnectError(code);
+  }
   try { return await response.json(); }
-  catch { throw new ConnectError('account_identity_result_malformed'); }
+  catch {
+    throw new ConnectError(endpoint === 'enroll'
+      ? 'account_identity_request_uncertain' : 'account_identity_result_malformed');
+  }
+}
+
+function enrollmentResult(value: unknown, expected?: { credentialId: string; userHandle: string }): AccountIdentityResult {
+  try {
+    const result = normalizeResult(value);
+    if (expected && (result.credential.credentialId !== expected.credentialId ||
+        result.credential.userHandle !== expected.userHandle)) {
+      throw new ConnectError('account_identity_credential_mismatch');
+    }
+    return result;
+  } catch {
+    // A successful submission may already have persisted the credential even
+    // when its reply cannot safely authenticate this caller. Recover by sign-in.
+    throw new ConnectError('account_identity_request_uncertain');
+  }
 }
 
 function assertInlineOrigin(): void {
@@ -216,7 +243,19 @@ export async function enrollAccountIdentity(config: EnrollAccountIdentityConfig 
   const name = config.name?.trim() || 'Dexter';
   return serializeCeremony(async () => {
     if (shouldUsePopup(transport)) {
-      return normalizeResult(await openCeremonyPopup('account-enroll', { connectHost, name }));
+      let value: unknown;
+      try { value = await openCeremonyPopup('account-enroll', { connectHost, name }); }
+      catch (cause) {
+        if (cause instanceof ConnectError && [
+          'popup_blocked', 'not_browser', 'user_cancelled', 'account_identity_verification_failed',
+          'challenge_unavailable', 'credential_exists', 'credential_changed', 'account_identity_unavailable',
+          'account_identity_challenge_malformed', 'webauthn_unsupported', 'webauthn_failed',
+        ].includes(cause.code)) throw cause;
+        // Timeout, closure or a transport failure cannot establish whether the
+        // hosted enrollment committed. A new creation must not be the recovery.
+        throw new ConnectError('account_identity_request_uncertain');
+      }
+      return enrollmentResult(value);
     }
     assertInlineOrigin();
     onPhase?.('challenge');
@@ -230,10 +269,8 @@ export async function enrollAccountIdentity(config: EnrollAccountIdentityConfig 
     try { credential = await startRegistration({ optionsJSON }); }
     catch (cause) { throw ceremonyError(cause); }
     onPhase?.('verifying');
-    const result = normalizeResult(await post(apiBase, 'enroll', { credential }));
-    if (result.credential.credentialId !== credential.id || result.credential.userHandle !== expectedUserHandle) {
-      throw new ConnectError('account_identity_credential_mismatch');
-    }
-    return result;
+    return enrollmentResult(await post(apiBase, 'enroll', { credential }), {
+      credentialId: credential.id, userHandle: expectedUserHandle,
+    });
   });
 }
