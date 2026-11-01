@@ -28,6 +28,34 @@ fresh passkey ceremony and replaces the active identity only after verification.
 Agent authority always requires a separate owner grant. Creating or connecting a
 Wallet grants no agent spending authority.
 
+## Account identity without wallet creation (unreleased)
+
+The new Account integration can enroll or authenticate a passkey independently
+of the existing Wallet flow:
+
+```ts
+import { enrollAccountIdentity, signInAccountIdentity } from '@dexterai/connect';
+
+const enrolled = await enrollAccountIdentity({ name: 'My Dexter passkey' });
+// On a later visit, use the passkey picker. The application owns persistence.
+const signedIn = await signInAccountIdentity();
+```
+
+Both return `profile: 'account-identity-v1'`, `credential` (user handle,
+credential ID and compressed P-256 public key), and an identity-only Bearer
+`session`. They do not create a wallet, install a Supabase session, discover a
+Principal or authorize money movement. The Account integration must establish
+the current Principal/credential binding and obtain the required approvals.
+
+Third-party sites use the origin-bound hosted popup. Inline ceremonies are
+restricted to `https://dexter.cash`, with required user verification and a
+discoverable P-256 credential. The hosted operation names are `account-signin`
+and `account-enroll`. An uncertain enrollment submission must lead to sign-in
+with the new passkey, not automatic creation of another credential.
+
+These exports need the matching API identity profile and hosted page. Source
+checks do not establish package publication or production availability.
+
 ## Interrupted wallet setup
 
 `createWallet()` retains the original passkey when setup is interrupted. Calling

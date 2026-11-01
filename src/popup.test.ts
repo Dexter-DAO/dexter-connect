@@ -92,6 +92,17 @@ afterEach(() => {
 });
 
 describe('hosted popup result boundary', () => {
+  it.each(['account-signin', 'account-enroll'] as const)('binds %s to its exact popup handshake', async op => {
+    const harness = beginPopup(op);
+    postHello(harness, { op: 'signin' });
+    postResult(harness, 'https://dexter.cash', harness.requestId);
+    expect(harness.popup.close).not.toHaveBeenCalled();
+    postHello(harness);
+    postResult(harness, 'https://dexter.cash', harness.requestId, { connected: true }, 'signin');
+    expect(harness.popup.close).not.toHaveBeenCalled();
+    postResult(harness, 'https://dexter.cash', harness.requestId);
+    await expect(harness.pending).resolves.toEqual({ connected: true });
+  });
   it('rejects a caller-controlled ceremony host before opening a window', async () => {
     const open = vi.spyOn(window, 'open');
     expect(() =>

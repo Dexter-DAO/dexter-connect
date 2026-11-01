@@ -26,11 +26,17 @@ import {
   resolveWalletStoreMode,
 } from './types';
 import { DEXTER_API_BASE } from './trust';
+import {
+  signInAccountIdentity,
+  enrollAccountIdentity,
+  type AccountIdentityResult,
+} from './accountIdentity';
+export type { AccountIdentityResult } from './accountIdentity';
 
 /** The only production browser origin allowed to run an inline Dexter ceremony. */
 export const DEXTER_HOSTED_CEREMONY_ORIGIN = 'https://dexter.cash';
 
-export type HostedCeremonyOperation = 'signin' | 'continue' | 'create' | 'recover';
+export type HostedCeremonyOperation = 'signin' | 'continue' | 'create' | 'recover' | 'account-signin' | 'account-enroll';
 export type HostedContinueResult = ContinueResult;
 
 interface HostedCeremonyBase {
@@ -73,14 +79,30 @@ export interface HostedRecoverCeremony extends HostedCeremonyBase {
   preferImmediate?: boolean;
 }
 
+export interface HostedAccountSignInCeremony {
+  operation: 'account-signin';
+  targetUserHandle?: string;
+  onPhase?: (phase: CeremonyPhase) => void;
+}
+
+export interface HostedAccountEnrollCeremony {
+  operation: 'account-enroll';
+  name?: string;
+  onPhase?: (phase: CeremonyPhase) => void;
+}
+
 export type HostedCeremonyRequest =
   | HostedSignInCeremony
   | HostedContinueCeremony
   | HostedCreateCeremony
-  | HostedRecoverCeremony;
+  | HostedRecoverCeremony
+  | HostedAccountSignInCeremony
+  | HostedAccountEnrollCeremony;
 
 export type HostedCeremonyResult<O extends HostedCeremonyOperation> =
-  O extends 'signin'
+  O extends 'account-signin' | 'account-enroll'
+    ? AccountIdentityResult
+    : O extends 'signin'
     ? SignInResult
     : O extends 'continue'
       ? HostedContinueResult
@@ -101,10 +123,25 @@ export function runHostedCeremony(
 ): Promise<HostedContinueResult>;
 export function runHostedCeremony(request: HostedCreateCeremony): Promise<CreateWalletResult>;
 export function runHostedCeremony(request: HostedRecoverCeremony): Promise<RecoverOutcome>;
+export function runHostedCeremony(request: HostedAccountSignInCeremony | HostedAccountEnrollCeremony): Promise<AccountIdentityResult>;
 export async function runHostedCeremony(
   request: HostedCeremonyRequest,
-): Promise<SignInResult | HostedContinueResult | CreateWalletResult | RecoverOutcome> {
+): Promise<SignInResult | HostedContinueResult | CreateWalletResult | RecoverOutcome | AccountIdentityResult> {
   assertHostedCeremonyOrigin();
+  if (request.operation === 'account-signin') {
+    return signInAccountIdentity({
+      apiBase: DEXTER_API_BASE, transport: 'inline',
+      ...(request.targetUserHandle === undefined ? {} : { targetUserHandle: request.targetUserHandle }),
+      ...(request.onPhase === undefined ? {} : { onPhase: request.onPhase }),
+    });
+  }
+  if (request.operation === 'account-enroll') {
+    return enrollAccountIdentity({
+      apiBase: DEXTER_API_BASE, transport: 'inline',
+      ...(request.name === undefined ? {} : { name: request.name }),
+      ...(request.onPhase === undefined ? {} : { onPhase: request.onPhase }),
+    });
+  }
   const walletStore = resolveWalletStoreMode(request.walletStore);
   assertHostedDelegationChoice(request);
   const persistence = walletStore === 'provisional' ? { walletStore } : {};

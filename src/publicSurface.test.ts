@@ -12,6 +12,8 @@ describe('Connect 0.29 public surface', () => {
     expect(react).toHaveProperty('useDexterConnection');
     expect(react).toHaveProperty('REMOVE_DEXTER_FROM_DEVICE_CONFIRMATION');
     expect(connect).toHaveProperty('recoverMissingVaultForAccount');
+    expect(connect).toHaveProperty('signInAccountIdentity');
+    expect(connect).toHaveProperty('enrollAccountIdentity');
   });
 
   it('keeps the browser roster and partial-session controls private', () => {

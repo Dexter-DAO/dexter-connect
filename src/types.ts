@@ -90,7 +90,9 @@ export type CeremonyOperation =
   | 'continue'
   | 'recover'
   | 'sign'
-  | 'recover-missing-vault';
+  | 'recover-missing-vault'
+  | 'account-signin'
+  | 'account-enroll';
 
 /** Minimal vault identity transferred to Dexter's hosted signing window. */
 export interface HostedSignVaultIdentity {

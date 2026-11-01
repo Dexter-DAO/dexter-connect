@@ -1,0 +1,239 @@
+import {
+  browserSupportsWebAuthn,
+  startAuthentication,
+  startRegistration,
+  type PublicKeyCredentialCreationOptionsJSON,
+  type PublicKeyCredentialRequestOptionsJSON,
+} from '@simplewebauthn/browser';
+import { base64ToBytes, base64urlToBytes, bytesToBase64, bytesToBase64url } from './base64';
+import { readErrorCode } from './httpError';
+import { openCeremonyPopup, shouldUsePopup } from './popup';
+import { DEXTER_RP_ID, resolveDexterApiBase, resolveDexterConnectHost } from './trust';
+import { ConnectError, type CeremonyPhase } from './types';
+
+export const ACCOUNT_IDENTITY_API_PATH = '/api/connect/account-identity';
+
+/** Application authentication. It does not authorize a Registry instruction. */
+export interface AccountIdentitySession {
+  readonly accessToken: string;
+  readonly expiresAt: number;
+  readonly expiresIn: number;
+  readonly tokenType: 'Bearer';
+}
+
+export interface AccountIdentityCredential {
+  readonly userHandle: string;
+  readonly credentialId: string;
+  /** Standard base64, 33-byte compressed P-256 public key. */
+  readonly publicKey: string;
+}
+
+export interface AccountIdentityResult {
+  readonly profile: 'account-identity-v1';
+  readonly session: AccountIdentitySession;
+  readonly credential: AccountIdentityCredential;
+}
+
+interface AccountIdentityConfig {
+  /** Compatibility options accept only the canonical Dexter origins. */
+  readonly apiBase?: string;
+  readonly connectHost?: string;
+  readonly transport?: 'auto' | 'popup' | 'inline';
+  readonly onPhase?: (phase: CeremonyPhase) => void;
+}
+
+export interface SignInAccountIdentityConfig extends AccountIdentityConfig {
+  readonly targetUserHandle?: string;
+}
+
+export interface EnrollAccountIdentityConfig extends AccountIdentityConfig {
+  /** Display label for the credential in the device's passkey picker. */
+  readonly name?: string;
+}
+
+function record(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function canonicalBase64url(value: unknown, exactLength?: number): value is string {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9_-]+$/.test(value) || value.length > 1400) return false;
+  try {
+    const bytes = base64urlToBytes(value);
+    return bytes.length > 0 && bytes.length <= 1024 &&
+      (exactLength === undefined || bytes.length === exactLength) && bytesToBase64url(bytes) === value;
+  } catch { return false; }
+}
+
+function validPublicKey(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length !== 44) return false;
+  try {
+    const bytes = base64ToBytes(value);
+    return bytes.length === 33 && (bytes[0] === 2 || bytes[0] === 3) && bytesToBase64(bytes) === value;
+  } catch { return false; }
+}
+
+function positiveInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+}
+
+function normalizeResult(value: unknown): AccountIdentityResult {
+  if (!record(value) || value.profile !== 'account-identity-v1' ||
+      !record(value.session) || !record(value.credential)) {
+    throw new ConnectError('account_identity_result_malformed');
+  }
+  const { session, credential } = value;
+  if (typeof session.accessToken !== 'string' || session.accessToken.length === 0 ||
+      /\s/.test(session.accessToken) || session.tokenType !== 'Bearer' ||
+      !positiveInteger(session.expiresAt) || !positiveInteger(session.expiresIn) ||
+      session.expiresIn > 30 * 24 * 60 * 60 ||
+      !canonicalBase64url(credential.userHandle, 16) ||
+      !canonicalBase64url(credential.credentialId) || !validPublicKey(credential.publicKey)) {
+    throw new ConnectError('account_identity_result_malformed');
+  }
+  return Object.freeze({
+    profile: 'account-identity-v1',
+    session: Object.freeze({
+      accessToken: session.accessToken, expiresAt: session.expiresAt,
+      expiresIn: session.expiresIn, tokenType: 'Bearer',
+    }),
+    credential: Object.freeze({
+      userHandle: credential.userHandle, credentialId: credential.credentialId, publicKey: credential.publicKey,
+    }),
+  });
+}
+
+async function post(apiBase: string, endpoint: string, body: unknown): Promise<unknown> {
+  let response: Response;
+  try {
+    response = await fetch(`${apiBase}${ACCOUNT_IDENTITY_API_PATH}/${endpoint}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(body), credentials: 'omit', cache: 'no-store', redirect: 'error',
+    });
+  } catch {
+    // Never retry a completed WebAuthn submission automatically. The server may
+    // already have consumed it; another sign-in can recover the identity.
+    throw new ConnectError(endpoint === 'login' || endpoint === 'enroll'
+      ? 'account_identity_request_uncertain' : 'account_identity_unavailable');
+  }
+  if (!response.ok) throw new ConnectError(await readErrorCode(response));
+  try { return await response.json(); }
+  catch { throw new ConnectError('account_identity_result_malformed'); }
+}
+
+function assertInlineOrigin(): void {
+  if (typeof window === 'undefined' || window.location.origin !== 'https://dexter.cash') {
+    throw new ConnectError('hosted_ceremony_origin_required');
+  }
+  if (!browserSupportsWebAuthn()) throw new ConnectError('webauthn_unsupported');
+}
+
+function loginOptions(value: unknown): PublicKeyCredentialRequestOptionsJSON {
+  if (!record(value) || !record(value.options)) throw new ConnectError('account_identity_challenge_malformed');
+  const options = value.options;
+  if (!canonicalBase64url(options.challenge) || base64urlToBytes(options.challenge).length < 16 ||
+      options.rpId !== DEXTER_RP_ID || options.userVerification !== 'required') {
+    throw new ConnectError('account_identity_challenge_malformed');
+  }
+  return options as unknown as PublicKeyCredentialRequestOptionsJSON;
+}
+
+function enrollmentOptions(value: unknown): PublicKeyCredentialCreationOptionsJSON {
+  if (!record(value) || !record(value.options)) throw new ConnectError('account_identity_challenge_malformed');
+  const options = value.options;
+  if (!canonicalBase64url(options.challenge) || base64urlToBytes(options.challenge).length < 16 ||
+      !record(options.rp) || options.rp.id !== DEXTER_RP_ID ||
+      !record(options.user) || !canonicalBase64url(options.user.id, 16) ||
+      !record(options.authenticatorSelection) || options.authenticatorSelection.userVerification !== 'required' ||
+      options.authenticatorSelection.residentKey !== 'required' ||
+      !Array.isArray(options.pubKeyCredParams) || options.pubKeyCredParams.length !== 1 ||
+      !record(options.pubKeyCredParams[0]) || options.pubKeyCredParams[0].type !== 'public-key' ||
+      options.pubKeyCredParams[0].alg !== -7) {
+    throw new ConnectError('account_identity_challenge_malformed');
+  }
+  return options as unknown as PublicKeyCredentialCreationOptionsJSON;
+}
+
+function ceremonyError(cause: unknown): ConnectError {
+  if (cause instanceof Error && (cause.name === 'NotAllowedError' || cause.name === 'AbortError')) {
+    return new ConnectError('user_cancelled');
+  }
+  return new ConnectError('webauthn_failed');
+}
+
+let ceremonyInProgress = false;
+
+async function serializeCeremony<T>(run: () => Promise<T>): Promise<T> {
+  if (ceremonyInProgress) throw new ConnectError('account_identity_ceremony_in_progress');
+  ceremonyInProgress = true;
+  try { return await run(); }
+  finally { ceremonyInProgress = false; }
+}
+
+/** Sign in with an existing credential. The caller owns session persistence. */
+export async function signInAccountIdentity(config: SignInAccountIdentityConfig = {}): Promise<AccountIdentityResult> {
+  const { targetUserHandle, transport, onPhase } = config;
+  const apiBase = resolveDexterApiBase(config.apiBase);
+  const connectHost = resolveDexterConnectHost(config.connectHost);
+  if (targetUserHandle !== undefined && !canonicalBase64url(targetUserHandle, 16)) {
+    throw new ConnectError('invalid_target_account');
+  }
+  return serializeCeremony(async () => {
+    let result: AccountIdentityResult;
+    if (shouldUsePopup(transport)) {
+      result = normalizeResult(await openCeremonyPopup('account-signin', {
+        connectHost, ...(targetUserHandle === undefined ? {} : { targetUserHandle }),
+      }));
+    } else {
+      assertInlineOrigin();
+      onPhase?.('challenge');
+      const optionsJSON = loginOptions(await post(apiBase, 'login-challenge', {}));
+      onPhase?.('passkey');
+      let credential;
+      try { credential = await startAuthentication({ optionsJSON }); }
+      catch (cause) { throw ceremonyError(cause); }
+      onPhase?.('verifying');
+      result = normalizeResult(await post(apiBase, 'login', { credential }));
+      if (result.credential.credentialId !== credential.id ||
+          (credential.response.userHandle && result.credential.userHandle !== credential.response.userHandle)) {
+        throw new ConnectError('account_identity_credential_mismatch');
+      }
+    }
+    if (targetUserHandle !== undefined && result.credential.userHandle !== targetUserHandle) {
+      throw new ConnectError('target_account_mismatch');
+    }
+    return result;
+  });
+}
+
+/** Enroll a passkey and authenticate its identity without creating a wallet. */
+export async function enrollAccountIdentity(config: EnrollAccountIdentityConfig = {}): Promise<AccountIdentityResult> {
+  const { transport, onPhase } = config;
+  const apiBase = resolveDexterApiBase(config.apiBase);
+  const connectHost = resolveDexterConnectHost(config.connectHost);
+  if (config.name !== undefined && (typeof config.name !== 'string' || config.name.trim().length > 80)) {
+    throw new ConnectError('invalid_account_identity_name');
+  }
+  const name = config.name?.trim() || 'Dexter';
+  return serializeCeremony(async () => {
+    if (shouldUsePopup(transport)) {
+      return normalizeResult(await openCeremonyPopup('account-enroll', { connectHost, name }));
+    }
+    assertInlineOrigin();
+    onPhase?.('challenge');
+    const options = enrollmentOptions(await post(apiBase, 'enroll-challenge', {}));
+    const expectedUserHandle = options.user.id;
+    const optionsJSON = {
+      ...options, rp: { ...options.rp, name: 'Dexter' }, user: { ...options.user, name, displayName: name },
+    };
+    onPhase?.('passkey');
+    let credential;
+    try { credential = await startRegistration({ optionsJSON }); }
+    catch (cause) { throw ceremonyError(cause); }
+    onPhase?.('verifying');
+    const result = normalizeResult(await post(apiBase, 'enroll', { credential }));
+    if (result.credential.credentialId !== credential.id || result.credential.userHandle !== expectedUserHandle) {
+      throw new ConnectError('account_identity_credential_mismatch');
+    }
+    return result;
+  });
+}
