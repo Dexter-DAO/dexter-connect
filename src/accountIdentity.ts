@@ -34,6 +34,16 @@ export interface AccountIdentityResult {
   readonly credential: AccountIdentityCredential;
 }
 
+export interface AccountRefusalRequest {
+  readonly request_id: string;
+  readonly decline_token: string;
+}
+
+export interface AccountAccessResult extends AccountIdentityResult {
+  /** First-party proof valid only for refusing the original connection request. */
+  readonly refusalProof: AccountIdentitySession;
+}
+
 interface AccountIdentityConfig {
   /** Compatibility options accept only the canonical Dexter origins. */
   readonly apiBase?: string;
@@ -76,30 +86,55 @@ function positiveInteger(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
 }
 
-function normalizeResult(value: unknown): AccountIdentityResult {
-  if (!record(value) || value.profile !== 'account-identity-v1' ||
-      !record(value.session) || !record(value.credential)) {
-    throw new ConnectError('account_identity_result_malformed');
-  }
-  const { session, credential } = value;
-  if (typeof session.accessToken !== 'string' || session.accessToken.length === 0 ||
+function normalizeSession(session: unknown): AccountIdentitySession {
+  if (!record(session) || typeof session.accessToken !== 'string' || session.accessToken.length === 0 ||
       /\s/.test(session.accessToken) || session.tokenType !== 'Bearer' ||
       !positiveInteger(session.expiresAt) || !positiveInteger(session.expiresIn) ||
-      session.expiresIn > 30 * 24 * 60 * 60 ||
-      !canonicalBase64url(credential.userHandle, 16) ||
-      !canonicalBase64url(credential.credentialId) || !validPublicKey(credential.publicKey)) {
+      session.expiresIn > 30 * 24 * 60 * 60) {
     throw new ConnectError('account_identity_result_malformed');
   }
   return Object.freeze({
-    profile: 'account-identity-v1',
-    session: Object.freeze({
-      accessToken: session.accessToken, expiresAt: session.expiresAt,
-      expiresIn: session.expiresIn, tokenType: 'Bearer',
-    }),
+    accessToken: session.accessToken, expiresAt: session.expiresAt, expiresIn: session.expiresIn, tokenType: 'Bearer',
+  });
+}
+
+function normalizeResult(value: unknown): AccountIdentityResult {
+  if (!record(value) || value.profile !== 'account-identity-v1' || !record(value.credential)) {
+    throw new ConnectError('account_identity_result_malformed');
+  }
+  const { credential } = value;
+  if (!canonicalBase64url(credential.userHandle, 16) ||
+      !canonicalBase64url(credential.credentialId) || !validPublicKey(credential.publicKey)) {
+    throw new ConnectError('account_identity_result_malformed');
+  }
+  // The public popup may return this object to another origin. Pick identity fields explicitly.
+  return Object.freeze({
+    profile: 'account-identity-v1', session: normalizeSession(value.session),
     credential: Object.freeze({
       userHandle: credential.userHandle, credentialId: credential.credentialId, publicKey: credential.publicKey,
     }),
   });
+}
+
+function normalizeAccessResult(value: unknown): AccountAccessResult {
+  const identity = normalizeResult(value);
+  const refusalProof = normalizeSession(record(value) ? value.refusalProof : undefined);
+  if (refusalProof.accessToken === identity.session.accessToken) {
+    throw new ConnectError('account_identity_result_malformed');
+  }
+  return Object.freeze({ ...identity, refusalProof });
+}
+
+function bindRefusalRequest(request: AccountRefusalRequest): AccountRefusalRequest {
+  assertInlineOrigin();
+  if (window.top !== window || window.location.pathname !== '/tabs/setup' ||
+      !record(request) || typeof request.request_id !== 'string' || typeof request.decline_token !== 'string' ||
+      !/^vpair_[a-f0-9]{1,80}$/.test(request.request_id) ||
+      !/^[a-f0-9]{64}$/.test(request.decline_token) ||
+      new URL(window.location.href).searchParams.get('request_id') !== request.request_id) {
+    throw new ConnectError('account_request_mismatch');
+  }
+  return Object.freeze({ request_id: request.request_id, decline_token: request.decline_token });
 }
 
 async function post(apiBase: string, endpoint: string, body: unknown): Promise<unknown> {
@@ -132,9 +167,10 @@ async function post(apiBase: string, endpoint: string, body: unknown): Promise<u
   }
 }
 
-function enrollmentResult(value: unknown, expected?: { credentialId: string; userHandle: string }): AccountIdentityResult {
+function enrollmentResult<T extends AccountIdentityResult>(value: unknown, decode: (value: unknown) => T,
+  expected?: { credentialId: string; userHandle: string }): T {
   try {
-    const result = normalizeResult(value);
+    const result = decode(value);
     if (expected && (result.credential.credentialId !== expected.credentialId ||
         result.credential.userHandle !== expected.userHandle)) {
       throw new ConnectError('account_identity_credential_mismatch');
@@ -198,6 +234,20 @@ async function serializeCeremony<T>(run: () => Promise<T>): Promise<T> {
 
 /** Sign in with an existing credential. The caller owns session persistence. */
 export async function signInAccountIdentity(config: SignInAccountIdentityConfig = {}): Promise<AccountIdentityResult> {
+  return signIn(config, normalizeResult);
+}
+
+/** Authenticate the active first-party request with a fresh passkey assertion. */
+export async function signInAccountAccess(config: Pick<SignInAccountIdentityConfig, 'targetUserHandle' | 'onPhase'> & {
+  readonly accountRequest: AccountRefusalRequest;
+}): Promise<AccountAccessResult> {
+  return signIn({ targetUserHandle: config.targetUserHandle, onPhase: config.onPhase, transport: 'inline' },
+    normalizeAccessResult, bindRefusalRequest(config.accountRequest));
+}
+
+async function signIn<T extends AccountIdentityResult>(config: SignInAccountIdentityConfig,
+  decode: (value: unknown) => T, accountRequest?: AccountRefusalRequest): Promise<T> {
+  const context = accountRequest ? { accountRequest } : {};
   const { targetUserHandle, transport, onPhase } = config;
   const apiBase = resolveDexterApiBase(config.apiBase);
   const connectHost = resolveDexterConnectHost(config.connectHost);
@@ -205,21 +255,21 @@ export async function signInAccountIdentity(config: SignInAccountIdentityConfig 
     throw new ConnectError('invalid_target_account');
   }
   return serializeCeremony(async () => {
-    let result: AccountIdentityResult;
+    let result: T;
     if (shouldUsePopup(transport)) {
-      result = normalizeResult(await openCeremonyPopup('account-signin', {
+      result = decode(await openCeremonyPopup('account-signin', {
         connectHost, ...(targetUserHandle === undefined ? {} : { targetUserHandle }),
       }));
     } else {
       assertInlineOrigin();
       onPhase?.('challenge');
-      const optionsJSON = loginOptions(await post(apiBase, 'login-challenge', {}));
+      const optionsJSON = loginOptions(await post(apiBase, 'login-challenge', context));
       onPhase?.('passkey');
       let credential;
       try { credential = await startAuthentication({ optionsJSON }); }
       catch (cause) { throw ceremonyError(cause); }
       onPhase?.('verifying');
-      result = normalizeResult(await post(apiBase, 'login', { credential }));
+      result = decode(await post(apiBase, 'login', { credential, ...context }));
       if (result.credential.credentialId !== credential.id ||
           (credential.response.userHandle && result.credential.userHandle !== credential.response.userHandle)) {
         throw new ConnectError('account_identity_credential_mismatch');
@@ -234,6 +284,20 @@ export async function signInAccountIdentity(config: SignInAccountIdentityConfig 
 
 /** Enroll a passkey and authenticate its identity without creating a wallet. */
 export async function enrollAccountIdentity(config: EnrollAccountIdentityConfig = {}): Promise<AccountIdentityResult> {
+  return enroll(config, normalizeResult);
+}
+
+/** Enroll on the original first-party request and obtain its distinct refusal proof. */
+export async function enrollAccountAccess(config: Pick<EnrollAccountIdentityConfig, 'name' | 'onPhase'> & {
+  readonly accountRequest: AccountRefusalRequest;
+}): Promise<AccountAccessResult> {
+  return enroll({ name: config.name, onPhase: config.onPhase, transport: 'inline' },
+    normalizeAccessResult, bindRefusalRequest(config.accountRequest));
+}
+
+async function enroll<T extends AccountIdentityResult>(config: EnrollAccountIdentityConfig,
+  decode: (value: unknown) => T, accountRequest?: AccountRefusalRequest): Promise<T> {
+  const context = accountRequest ? { accountRequest } : {};
   const { transport, onPhase } = config;
   const apiBase = resolveDexterApiBase(config.apiBase);
   const connectHost = resolveDexterConnectHost(config.connectHost);
@@ -255,11 +319,11 @@ export async function enrollAccountIdentity(config: EnrollAccountIdentityConfig 
         // hosted enrollment committed. A new creation must not be the recovery.
         throw new ConnectError('account_identity_request_uncertain');
       }
-      return enrollmentResult(value);
+      return enrollmentResult(value, decode);
     }
     assertInlineOrigin();
     onPhase?.('challenge');
-    const options = enrollmentOptions(await post(apiBase, 'enroll-challenge', {}));
+    const options = enrollmentOptions(await post(apiBase, 'enroll-challenge', context));
     const expectedUserHandle = options.user.id;
     const optionsJSON = {
       ...options, rp: { ...options.rp, name: 'Dexter' }, user: { ...options.user, name, displayName: name },
@@ -269,7 +333,7 @@ export async function enrollAccountIdentity(config: EnrollAccountIdentityConfig 
     try { credential = await startRegistration({ optionsJSON }); }
     catch (cause) { throw ceremonyError(cause); }
     onPhase?.('verifying');
-    return enrollmentResult(await post(apiBase, 'enroll', { credential }), {
+    return enrollmentResult(await post(apiBase, 'enroll', { credential, ...context }), decode, {
       credentialId: credential.id, userHandle: expectedUserHandle,
     });
   });

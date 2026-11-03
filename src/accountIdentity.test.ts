@@ -9,7 +9,7 @@ vi.mock('./popup', () => ({
 }));
 
 import { startAuthentication, startRegistration } from '@simplewebauthn/browser';
-import { enrollAccountIdentity, signInAccountIdentity } from './accountIdentity';
+import { enrollAccountAccess, signInAccountAccess, enrollAccountIdentity, signInAccountIdentity } from './accountIdentity';
 import { openCeremonyPopup } from './popup';
 import { bytesToBase64, bytesToBase64url } from './base64';
 import { ConnectError } from './types';
@@ -248,5 +248,61 @@ describe('new Account credential identity', () => {
     await expect(enrollAccountIdentity()).rejects.toMatchObject({ code: 'account_identity_ceremony_in_progress' });
     finish(result);
     expect(await pending).toEqual(result);
+  });
+});
+
+
+describe('first-party proof for one pending request', () => {
+  const request = { request_id: 'vpair_abc123', decline_token: '1'.repeat(64) };
+  const scoped = { ...result, refusalProof: { ...result.session, accessToken: 'distinct-request-proof', expiresIn: 300 } };
+  const review = 'https://dexter.cash/tabs/setup?request_id=vpair_abc123';
+  function at(url: string) {
+    (window as unknown as { happyDOM: { setURL(url: string): void } }).happyDOM.setURL(url);
+  }
+
+  it.each(['login', 'enroll'])('binds the challenge and %s completion to the original ticket', async operation => {
+    at(review);
+    const fetch = setupFetch(operation === 'login' ? loginChallenge : enrollChallenge, scoped);
+    const mutable = { ...request };
+    const pending = operation === 'login'
+      ? signInAccountAccess({ targetUserHandle: userHandle, accountRequest: mutable })
+      : enrollAccountAccess({ name: 'Branch', accountRequest: mutable });
+    mutable.request_id = 'vpair_ffff';
+    expect(await pending).toEqual(scoped);
+    expect(fetch.mock.calls.map(([, init]) => JSON.parse(init.body).accountRequest)).toEqual([request, request]);
+    expect(openCeremonyPopup).not.toHaveBeenCalled();
+  });
+
+  it.each(['enroll', 'login'])('never forwards request context or a proof through the %s popup', async operation => {
+    const { runHostedCeremony } = await import('./hosted');
+    at('https://dexter.cash/connect');
+    const fetch = setupFetch(operation === 'login' ? loginChallenge : enrollChallenge, scoped);
+    const forged = { operation: operation === 'login' ? 'account-signin' as const : 'account-enroll' as const,
+      accountRequest: request, refusalProof: scoped.refusalProof };
+    const received = await runHostedCeremony(forged);
+    expect(received).toEqual(result);
+    expect(fetch.mock.calls.map(([, init]) => JSON.parse(init.body).accountRequest)).toEqual([undefined, undefined]);
+
+    at('https://example.org');
+    vi.mocked(openCeremonyPopup).mockResolvedValueOnce(scoped);
+    const config = { transport: 'popup' as const, accountRequest: request };
+    const external = operation === 'login' ? await signInAccountIdentity(config) : await enrollAccountIdentity(config);
+    expect(external).toEqual(result);
+    expect(vi.mocked(openCeremonyPopup).mock.calls[0][1]).not.toHaveProperty('accountRequest');
+  });
+
+  it.each(['https://dexter.cash/connect', 'https://other.example/tabs/setup?request_id=vpair_abc123',
+    'https://dexter.cash/tabs/setup?request_id=vpair_abcd'])('refuses scoped ceremony at %s before initiating WebAuthn', async url => {
+    at(url); const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
+    await expect(signInAccountAccess({ accountRequest: request })).rejects.toBeInstanceOf(ConnectError);
+    expect(fetch).not.toHaveBeenCalled(); expect(startAuthentication).not.toHaveBeenCalled();
+  });
+
+  it('refuses an absent proof or one identical to the ordinary session', async () => {
+    at(review);
+    for (const extra of [{}, { refusalProof: result.session }]) {
+      setupFetch(loginChallenge, { ...result, ...extra });
+      await expect(signInAccountAccess({ accountRequest: request })).rejects.toMatchObject({ code: 'account_identity_result_malformed' });
+    }
   });
 });

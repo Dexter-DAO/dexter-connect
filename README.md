@@ -53,6 +53,12 @@ discoverable P-256 credential. The hosted operation names are `account-signin`
 and `account-enroll`. An uncertain enrollment submission must lead to sign-in
 with the new passkey, not automatic creation of another credential.
 
+Dexter’s own connection review at `/tabs/setup` uses `enrollAccountAccess`
+or `signInAccountAccess` when the original request includes a refusal ticket.
+Both pass the request ID and ticket to the passkey challenge and its completion.
+The returned `refusalProof` belongs in the current review’s memory. The popup
+returns only the ordinary identity result to the requesting app.
+
 These exports need the matching API identity profile and hosted page. Source
 checks do not establish package publication or production availability.
 
