@@ -46,11 +46,15 @@ export type {
   RelationCandidates,
 } from './relationController';
 export {
+  signInAccountAccess,
+  enrollAccountAccess,
   signInAccountIdentity,
   enrollAccountIdentity,
   ACCOUNT_IDENTITY_API_PATH,
 } from './accountIdentity';
 export type {
+  AccountAccessResult,
+  AccountRefusalRequest,
   AccountIdentityResult,
   AccountIdentityCredential,
   AccountIdentitySession,
