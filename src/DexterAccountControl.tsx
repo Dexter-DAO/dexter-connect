@@ -5,7 +5,7 @@ import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } f
 import { ConnectError } from './types';
 import type { UseDexterConnection } from './useDexterConnection';
 import { CreateWalletPanel } from './CreateWalletPanel';
-import { AccountFace, AccountMark } from './accountBrand';
+import { AccountFace, AccountMark, AccountWordmark } from './accountBrand';
 import { ACCOUNT_CONTROL_CSS } from './accountControlStyles';
 import { AccountLink, resolveAccountNavigation, type AccountLinkComponent, type AccountMenuItem, type AccountNavigation } from './accountNavigation';
 import { DexterAccountSummary } from './DexterAccountSummary';
@@ -51,6 +51,7 @@ export function DexterAccountControl({ connection: dexter, open: controlledOpen,
   const control = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const panel = useRef<HTMLElement>(null);
+  const panelVisit = useRef(0);
   const isOpen = useRef(open);
   isOpen.current = open;
   const changeOpen = useRef(setOpen);
@@ -66,12 +67,23 @@ export function DexterAccountControl({ connection: dexter, open: controlledOpen,
   const title = permissions.walletIdentityVisible ? dexter.identity.walletLabel?.trim() || 'Your Dexter account'
     : name || email.split('@')[0] || 'Your Dexter account';
   const canCreate = !checking && dexter.model.stage === 'connect';
+  const creating = canCreate && createOpen;
   const canOpenWallet = dexter.model.stage === 'ready' && permissions.walletDataVisible;
   const finishCreation = Boolean(createdHandle && !permissions.accountContentVisible);
   const needsConnection = ['connect', 'repair', 'offline', 'error'].includes(dexter.model.stage);
   const links = resolveAccountNavigation(navigation, dexter.activeWallet);
   const headerWallet = canOpenWallet && !busy && dexter.activeWallet?.userHandle ? dexter.activeWallet : null;
   const close = () => changeOpen.current(false);
+  const dismiss = () => { close(); trigger.current?.focus(); };
+  const welcomeTitle = useRef<HTMLHeadingElement>(null);
+  const entryAction = useRef<HTMLButtonElement>(null);
+  const wasCreating = useRef(false);
+
+  useLayoutEffect(() => {
+    if (open && creating) welcomeTitle.current?.focus();
+    else if (open && wasCreating.current) entryAction.current?.focus();
+    wasCreating.current = creating;
+  }, [open, creating]);
 
   useEffect(() => setReady(true), []);
   useEffect(() => {
@@ -90,7 +102,7 @@ export function DexterAccountControl({ connection: dexter, open: controlledOpen,
     };
     position();
     window.addEventListener('resize', position);
-    return () => window.removeEventListener('resize', position);
+    return () => { panelVisit.current++; window.removeEventListener('resize', position); };
   }, [open]);
   useEffect(() => {
     if (!open) { setError(''); setCreateOpen(false); setManageOpen(false); return; }
@@ -116,6 +128,7 @@ export function DexterAccountControl({ connection: dexter, open: controlledOpen,
 
   const run = async (action: ConnectionAction) => {
     if (busy || pendingAction.current) return;
+    const visit = panelVisit.current;
     pendingAction.current = true; setPending(action); setError('');
     try {
       if (action === 'connect') {
@@ -123,6 +136,7 @@ export function DexterAccountControl({ connection: dexter, open: controlledOpen,
         if (target) await dexter.connect({ userHandle: target });
         else await dexter.connect();
         setCreatedHandle(null);
+        if (isOpen.current && visit === panelVisit.current && (needsConnection || finishCreation)) dismiss();
       }
       if (action === 'switch') { await dexter.useAnotherDexterWallet(); setCreatedHandle(null); }
       if (action === 'retry') await dexter.retry();
@@ -140,7 +154,7 @@ export function DexterAccountControl({ connection: dexter, open: controlledOpen,
       aria-controls={`${id}-menu`} aria-haspopup="dialog" onClick={() => setOpen(!open)}><AccountMark/></button>
     <AnimatePresence>
       {open && <motion.section id={`${id}-menu`} role="dialog" aria-labelledby={`${id}-title`}
-        className="dx-account-panel" ref={panel}
+        className={creating ? 'dx-account-panel dx-account-welcome' : 'dx-account-panel'} ref={panel}
         style={{ right: -panelShift }}
         initial={{ opacity: 0, y: reduced ? 0 : -6, scale: reduced ? 1 : .985 }}
         animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: reduced ? 0 : -4 }}
@@ -148,7 +162,10 @@ export function DexterAccountControl({ connection: dexter, open: controlledOpen,
         onAnimationComplete={() => {
           if (isOpen.current && document.activeElement === trigger.current) panel.current?.querySelector<HTMLElement>('button:not(:disabled), a[href]')?.focus();
         }}>
-        <div className="dx-account-identity"><AccountFace/><div><h3 id={`${id}-title`}>
+        {creating ? <header className="dx-welcome-header">
+          <span className="dx-welcome-brand"><AccountWordmark/>Account</span>
+          <button type="button" className="dx-welcome-link" onClick={dismiss}>Close</button>
+        </header> : <div className="dx-account-identity"><AccountFace/><div><h3 id={`${id}-title`}>
           {headerWallet && links.money ? <LinkComponent href={links.money.href} onClick={close} title="Open wallet">{title}</LinkComponent> : title}
         </h3>
           {(checking || email) && <p>{checking ? 'Opening your account...' : email}</p>}
@@ -156,20 +173,28 @@ export function DexterAccountControl({ connection: dexter, open: controlledOpen,
             key={`${headerWallet.userHandle}:${headerWallet.vaultPda}:${headerWallet.receiveAddress}`}
             address={headerWallet.receiveAddress}
           />}
-        </div></div>
+        </div></div>}
         {checking ? <p className="dx-account-status" role="status">Checking your connection...</p> : <>
-          {canCreate && createOpen ? <div className="dx-account-creation">
-            <button type="button" className="dx-account-back" onClick={() => setCreateOpen(false)}>Back to sign in</button>
-            <CreateWalletPanel agentDelegation="deferred" terminology="account" withMark={false} onCreated={(result) => { setCreatedHandle(result.handle); setCreateOpen(false); }}/>
-          </div> : <>
+          {creating ? <>
+            <div className="dx-account-creation">
+              <h2 id={`${id}-title`} tabIndex={-1} ref={welcomeTitle}>Welcome to Dexter</h2>
+              <p className="dx-welcome-intro">Use your account across the apps you connect. You choose what your agents can do.</p>
+              <CreateWalletPanel agentDelegation="deferred" terminology="account" showName="on-request" withMark={false}
+                onCreated={(result) => { setCreatedHandle(result.handle); setCreateOpen(false); }}/>
+              <button type="button" className="dx-welcome-link" onClick={() => setCreateOpen(false)}>Sign in instead</button>
+            </div>
+            <footer className="dx-welcome-terms">By creating an account, you agree to the{' '}
+              <a href="https://dexter.cash/terms" target="_blank" rel="noreferrer">Terms of Service</a> and acknowledge the{' '}
+              <a href="https://dexter.cash/privacy" target="_blank" rel="noreferrer">Privacy Policy</a>.</footer>
+          </> : <>
             {(needsConnection || finishCreation) && <div className="dx-account-entry">
               {dexter.model.stage === 'repair' && <p className="dx-account-explanation">Reconnect your passkey to continue.</p>}
-              <button type="button" className="dx-account-primary" disabled={busy}
+              <button type="button" className="dx-account-primary" ref={entryAction} disabled={busy}
                 onClick={() => void run(dexter.model.primaryAction === 'retry' ? 'retry' : 'connect')}>
                 {busy ? 'Opening passkey...' : finishCreation ? 'Finish signing in' : dexter.model.stage === 'repair' ? 'Reconnect Dexter'
                   : dexter.model.stage === 'error' || dexter.model.stage === 'offline' ? 'Try again' : 'Sign in with Dexter'}
               </button>
-              {canCreate && !finishCreation && <button type="button" className="dx-account-create" onClick={() => setCreateOpen(true)} disabled={busy}>Create account</button>}
+              {canCreate && !finishCreation && <button type="button" className="dx-account-create" onClick={() => setCreateOpen(true)} disabled={busy}>Create an account</button>}
             </div>}
             {canOpenWallet && <div key={`${dexter.activeWallet?.userHandle ?? 'account'}:${dexter.activeWallet?.vaultPda ?? ''}`}>
               {renderSummary ? renderSummary(close) : <DefaultSummary connection={dexter} navigation={links} LinkComponent={LinkComponent} onNavigate={close} styleNonce={styleNonce}/>}

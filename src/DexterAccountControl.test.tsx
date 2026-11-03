@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { act } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { render, click, keydown, type RenderHandle } from './testRender';
+import { render, click, keydown, type as typeText, type RenderHandle } from './testRender';
 import { DexterAccountControl } from './DexterAccountControl';
 import type { UseDexterConnection } from './useDexterConnection';
 
@@ -46,9 +46,10 @@ function clipboard(writeText: ReturnType<typeof vi.fn>) {
     expect(button('Sign in with Dexter').querySelector('svg')).toBeNull();
     expect(view.container.querySelector('[src^="/assets"]')).toBeNull();
     expect(view.container.querySelector('style')?.textContent).toContain('.dx-account-panel');
-    expect(button('Create account')).toBeTruthy();
+    expect(button('Create an account')).toBeTruthy();
     await click(button('Sign in with Dexter'));
     expect(c.connect).toHaveBeenCalledTimes(1);
+    expect(button('Open Dexter account').getAttribute('aria-expanded')).toBe('false');
     expect(balance).not.toHaveBeenCalled();
   });
 
@@ -173,15 +174,56 @@ function clipboard(writeText: ReturnType<typeof vi.fn>) {
     expect(view.container.querySelector('h3 a')).not.toBeNull();
   });
 
+  it('shows welcome only on creation and returns to entry without starting a ceremony', async () => {
+    const c = connection();
+    view = await render(<DexterAccountControl connection={c}/>);
+    await open();
+    expect(view.container.querySelector('h2')).toBeNull();
+    await click(button('Create an account'));
+    const heading = view.container.querySelector('h2')!;
+    expect(heading.textContent).toBe('Welcome to Dexter');
+    expect(view.container.querySelector('[role="dialog"]')?.getAttribute('aria-labelledby')).toBe(heading.id);
+    expect(document.activeElement).toBe(heading);
+    const create = button('Create my account');
+    expect(document.getElementById(create.getAttribute('aria-describedby')!)?.textContent).toBe('Your device will ask for a passkey.');
+    expect(view.container.querySelector('details')?.open).toBe(false);
+    await click(button('Sign in instead'));
+    expect(document.activeElement).toBe(button('Sign in with Dexter'));
+    await click(button('Create an account'));
+    await click(button('Close'));
+    expect(document.activeElement).toBe(button('Open Dexter account'));
+    expect(creation).not.toHaveBeenCalled();
+    expect(c.connect).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])('leaves the next focus or reopened menu alone after late sign-in (reopen=%s)', async reopen => {
+    let finish!: () => void;
+    const c = connection();
+    c.connect = vi.fn(() => new Promise<Awaited<ReturnType<typeof c.connect>>>(resolve => { finish = () => resolve({} as never); }));
+    view = await render(<DexterAccountControl connection={c}/>);
+    await open();
+    await click(button('Sign in with Dexter'));
+    const field = document.createElement('input');
+    view.container.append(field);
+    await act(async () => field.focus());
+    expect(button('Open Dexter account').getAttribute('aria-expanded')).toBe('false');
+    if (reopen) await open();
+    await act(async () => finish());
+    if (reopen) expect(button('Close Dexter account').getAttribute('aria-expanded')).toBe('true');
+    else expect(document.activeElement).toBe(field);
+  });
+
   it('finishes a newly created account through its targeted host sign-in', async () => {
     const handle = 'AAAAAAAAAAAAAAAAAAAAAA';
     creation.mockResolvedValue({ handle, vault: { userHandle: handle } });
     const c = connection();
     view = await render(<DexterAccountControl connection={c}/>);
     await open();
-    await click(button('Create account'));
-    await click(button('Create account'));
-    expect(creation).toHaveBeenCalledTimes(1);
+    await click(button('Create an account'));
+    await click(view.container.querySelector('summary'));
+    await typeText(view.container.querySelector('input'), 'Branch');
+    await click(button('Create my account'));
+    expect(creation).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ name: 'Branch', agentDelegation: 'deferred', spendPolicy: undefined }));
     await click(button('Finish signing in'));
     expect(c.connect).toHaveBeenCalledExactlyOnceWith({ userHandle: handle });
   });
@@ -192,8 +234,8 @@ function clipboard(writeText: ReturnType<typeof vi.fn>) {
     const c = connection();
     view = await render(<DexterAccountControl connection={c}/>);
     await open();
-    await click(button('Create account'));
-    await click(button('Create account'));
+    await click(button('Create an account'));
+    await click(button('Create my account'));
     const ready = connection(true);
     const walletOnly = { ...ready, model: { ...ready.model, permissions: { ...ready.model.permissions, accountContentVisible: false } } };
     await view.rerender(<DexterAccountControl connection={walletOnly}/>);

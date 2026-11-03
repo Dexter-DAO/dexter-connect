@@ -30,8 +30,8 @@ export interface CreateWalletPanelProps {
   apiBase?: string;
   /** Where the WebAuthn ceremony runs. Default 'auto' (createWallet's default). */
   transport?: 'auto' | 'popup' | 'inline';
-  /** Render the optional "Name your wallet" field. Default true. */
-  showName?: boolean;
+  /** Show the optional name field immediately (default), on request, or never. */
+  showName?: boolean | 'on-request';
   /**
    * `deferred` is the default and omits the agent-allowance UI.
    * `configure-now` is the explicit compatibility flow for an allowance.
@@ -83,6 +83,7 @@ export function CreateWalletPanel(props: CreateWalletPanelProps): ReactElement {
 
   const hosted = resolvedTransport === 'popup';
   const ownerOnly = agentDelegation === 'deferred';
+  const passkeyHint = account && ownerOnly && resolvedTransport === 'inline';
   const policy =
     resolvedTransport === 'inline' && !ownerOnly
       ? authoredPolicy(value ?? '')
@@ -136,25 +137,27 @@ export function CreateWalletPanel(props: CreateWalletPanelProps): ReactElement {
     }
   };
 
+  const nameField = (
+    <div className="dx-cwp__field">
+      <label className="dx-cwp__label" htmlFor={nameInputId}>
+        {account ? 'Account name' : 'Name your wallet'}
+      </label>
+      <input
+        id={nameInputId}
+        className="dx-cwp__name"
+        maxLength={40}
+        placeholder={account ? 'Dexter account' : 'Dexter Wallet'}
+        value={name}
+        disabled={running}
+        autoComplete="off"
+        onChange={(e) => setName(e.target.value)}
+      />
+    </div>
+  );
+
   return (
     <div className={cx('dx-cwp', className)}>
-      {!hosted && resolvedTransport === 'inline' && showName && (
-        <div className="dx-cwp__field">
-          <label className="dx-cwp__label" htmlFor={nameInputId}>
-            {account ? 'Account name' : 'Name your wallet'}
-          </label>
-          <input
-            id={nameInputId}
-            className="dx-cwp__name"
-            maxLength={40}
-            placeholder={account ? 'Dexter account' : 'Dexter Wallet'}
-            value={name}
-            disabled={running}
-            autoComplete="off"
-            onChange={(e) => setName(e.target.value)}
-          />
-        </div>
-      )}
+      {resolvedTransport === 'inline' && showName === true && nameField}
 
       {hosted ? (
         <p className="dx-cwp__hosted">
@@ -190,6 +193,7 @@ export function CreateWalletPanel(props: CreateWalletPanelProps): ReactElement {
         block
         withMark={withMark}
         className="dx-cwp__cta"
+        aria-describedby={passkeyHint ? `${nameInputId}-hint` : undefined}
         loading={running}
         loadingLabel={phase ? ceremonyPhaseLabel(phase) : 'Creating…'}
         disabled={!canContinue || resolvedTransport === 'unknown'}
@@ -199,8 +203,15 @@ export function CreateWalletPanel(props: CreateWalletPanelProps): ReactElement {
           ? 'Retry'
           : hosted
             ? account ? 'Continue to Dexter' : 'Continue to Dexter Wallet'
-            : account ? 'Create account' : 'Create your Dexter Wallet'}
+            : account ? (ownerOnly ? 'Create my account' : 'Create account') : 'Create your Dexter Wallet'}
       </DexterButton>
+      {passkeyHint && <p className="dx-cwp__hint" id={`${nameInputId}-hint`}>Your device will ask for a passkey.</p>}
+      {showName === 'on-request' && resolvedTransport === 'inline' && (
+        <details className="dx-cwp__naming">
+          <summary>Name this {account ? 'account' : 'wallet'}</summary>
+          {nameField}
+        </details>
+      )}
     </div>
   );
 }
