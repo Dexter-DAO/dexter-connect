@@ -46,6 +46,18 @@ export type {
   RelationCandidates,
 } from './relationController';
 export {
+  signInAccountIdentity,
+  enrollAccountIdentity,
+  ACCOUNT_IDENTITY_API_PATH,
+} from './accountIdentity';
+export type {
+  AccountIdentityResult,
+  AccountIdentityCredential,
+  AccountIdentitySession,
+  SignInAccountIdentityConfig,
+  EnrollAccountIdentityConfig,
+} from './accountIdentity';
+export {
   WALLET_ACCOUNT_BINDING_PATH,
   walletBindingCandidate,
   accountBindingCandidate,

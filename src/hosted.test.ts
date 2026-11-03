@@ -8,6 +8,7 @@ const relay = vi.hoisted(() => ({
 }));
 const enrollment = vi.hoisted(() => ({ createWallet: vi.fn() }));
 const recovery = vi.hoisted(() => ({ recoverWallet: vi.fn() }));
+const accountIdentity = vi.hoisted(() => ({ signInAccountIdentity: vi.fn(), enrollAccountIdentity: vi.fn() }));
 const missingVaultRecovery = vi.hoisted(() => ({
   runHostedMissingVaultRecoveryProof: vi.fn(),
 }));
@@ -15,6 +16,7 @@ const missingVaultRecovery = vi.hoisted(() => ({
 vi.mock('./relay', () => relay);
 vi.mock('./enroll', () => enrollment);
 vi.mock('./recover', () => recovery);
+vi.mock('./accountIdentity', () => accountIdentity);
 vi.mock('./missingVaultRecovery', () => missingVaultRecovery);
 
 import {
@@ -57,6 +59,20 @@ describe('hosted ceremony entry', () => {
       },
       onPhase,
     );
+  });
+
+  it('runs new Account identity ceremonies without a legacy wallet operation', async () => {
+    const onPhase = vi.fn();
+    await runHostedCeremony({ operation: 'account-signin', targetUserHandle: 'AAAAAAAAAAAAAAAAAAAAAA', onPhase });
+    await runHostedCeremony({ operation: 'account-enroll', name: 'Branch', onPhase });
+    expect(accountIdentity.signInAccountIdentity).toHaveBeenCalledWith({
+      apiBase: 'https://api.dexter.cash', transport: 'inline', targetUserHandle: 'AAAAAAAAAAAAAAAAAAAAAA', onPhase,
+    });
+    expect(accountIdentity.enrollAccountIdentity).toHaveBeenCalledWith({
+      apiBase: 'https://api.dexter.cash', transport: 'inline', name: 'Branch', onPhase,
+    });
+    expect(relay.passkeyLogin).not.toHaveBeenCalled();
+    expect(enrollment.createWallet).not.toHaveBeenCalled();
   });
 
   it('forwards the account target only through the pinned sign-in ceremony', async () => {

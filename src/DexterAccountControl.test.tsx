@@ -5,6 +5,8 @@ import { render, click, keydown, type as typeText, type RenderHandle } from './t
 import { DexterAccountControl } from './DexterAccountControl';
 import type { UseDexterConnection } from './useDexterConnection';
 
+const credentials = vi.hoisted(() => ({ enroll: vi.fn(), signIn: vi.fn() }));
+vi.mock('./accountIdentity', () => ({ enrollAccountIdentity: credentials.enroll, signInAccountIdentity: credentials.signIn }));
 const creation = vi.hoisted(() => vi.fn());
 vi.mock('./enroll', () => ({ createWallet: creation }));
 vi.mock('./popup', () => ({ shouldUsePopup: () => false }));
@@ -38,6 +40,31 @@ function clipboard(writeText: ReturnType<typeof vi.fn>) {
 }
 
  describe('shared account control', () => {
+  it('uses credential ceremonies for the opted-in guest header and preserves the wallet action', async () => {
+    const c = connection(), access = { signedIn: false, loading: false, accept: vi.fn(), clear: vi.fn() };
+    const result = { profile: 'account-identity-v1' };
+    credentials.signIn.mockResolvedValue(result); credentials.enroll.mockResolvedValue(result);
+    view = await render(<DexterAccountControl connection={c} credentialAccess={access}/>);
+    await open(); await click(button('Sign in with Dexter'));
+    expect(access.accept).toHaveBeenCalledWith(result);
+    await open(); await click(button('Create an account')); await click(button('Create my account'));
+    expect(credentials.enroll).toHaveBeenCalledOnce();
+    expect(access.accept).toHaveBeenCalledTimes(2);
+    expect(creation).not.toHaveBeenCalled(); expect(c.connect).not.toHaveBeenCalled();
+    await open(); await click(button('Use an existing wallet'));
+    expect(c.connect).toHaveBeenCalledOnce();
+  });
+  it('exposes no wallet summary to an identity-only person and signs out of that profile', async () => {
+    const c = connection(), access = { signedIn: true, loading: false, accept: vi.fn(), clear: vi.fn() };
+    view = await render(<DexterAccountControl connection={c} credentialAccess={access}/>);
+    await open();
+    expect(view.container.textContent).toContain('signed in with your passkey');
+    expect(balance).not.toHaveBeenCalled();
+    expect(view.container.querySelector('a[href*="wallet"]')).toBeNull();
+    await click(button('Sign out'));
+    expect(access.clear).toHaveBeenCalledOnce(); expect(c.disconnectDexter).not.toHaveBeenCalled();
+  });
+
   it('ships its marks and styling without site asset paths, with one guest panel brand', async () => {
     const c = connection();
     view = await render(<DexterAccountControl connection={c}/>);

@@ -3,6 +3,7 @@
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { ConnectError } from './types';
+import { signInAccountIdentity, type AccountIdentityResult } from './accountIdentity';
 import type { UseDexterConnection } from './useDexterConnection';
 import { CreateWalletPanel } from './CreateWalletPanel';
 import { AccountFace, AccountMark, AccountWordmark } from './accountBrand';
@@ -11,11 +12,13 @@ import { AccountLink, resolveAccountNavigation, type AccountLinkComponent, type 
 import { DexterAccountSummary } from './DexterAccountSummary';
 import { useAccountPortfolio } from './useAccountPortfolio';
 
-type ConnectionAction = 'connect' | 'switch' | 'retry' | 'disconnect';
+type ConnectionAction = 'credential' | 'connect' | 'switch' | 'retry' | 'disconnect';
 
 export interface DexterAccountControlProps {
   /** Reuse the app's canonical useDexterConnection instance. */
   connection: UseDexterConnection;
+  /** Provide an independent sign-in for people without a connected wallet. */
+  credentialAccess?: { signedIn: boolean; loading: boolean; accept: (result: AccountIdentityResult) => void; clear: () => void };
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   /** Shown only after the connection verifies account access. */
@@ -34,7 +37,7 @@ export interface DexterAccountControlProps {
 
 /** Branded account entry with canonical connection, balance and settings. */
 export function DexterAccountControl({ connection: dexter, open: controlledOpen,
-  onOpenChange, profile, navigation, items = [], LinkComponent = AccountLink,
+  onOpenChange, credentialAccess, profile, navigation, items = [], LinkComponent = AccountLink,
   renderSummary, formatError = accountConnectionError, className = '', triggerClassName = '', styleNonce,
 }: DexterAccountControlProps) {
   const [ownOpen, setOwnOpen] = useState(false);
@@ -44,6 +47,7 @@ export function DexterAccountControl({ connection: dexter, open: controlledOpen,
   const [pending, setPending] = useState<ConnectionAction | null>(null);
   const [error, setError] = useState('');
   const [createOpen, setCreateOpen] = useState(false);
+  const [credentialNeedsSignIn, setCredentialNeedsSignIn] = useState(false);
   const [createdHandle, setCreatedHandle] = useState<string | null>(null);
   const [manageOpen, setManageOpen] = useState(false);
   const [panelShift, setPanelShift] = useState(0);
@@ -59,14 +63,15 @@ export function DexterAccountControl({ connection: dexter, open: controlledOpen,
   const reduced = useReducedMotion();
   const id = useId();
   const permissions = dexter.model.permissions;
-  const checking = !ready || dexter.model.stage === 'checking';
+  const credentialEntry = credentialAccess && dexter.model.stage === 'connect' && !dexter.identity.hasWallet && !dexter.identity.hasAccount ? credentialAccess : undefined;
+  const checking = !ready || dexter.model.stage === 'checking' || credentialEntry?.loading === true;
   const busy = checking || pending !== null || dexter.operation !== 'idle';
   const hasIdentity = ready && (dexter.identity.hasWallet || dexter.identity.hasAccount);
   const email = permissions.accountContentVisible ? profile?.email?.trim() ?? '' : '';
   const name = permissions.accountContentVisible ? profile?.name?.trim() ?? '' : '';
   const title = permissions.walletIdentityVisible ? dexter.identity.walletLabel?.trim() || 'Your Dexter account'
     : name || email.split('@')[0] || 'Your Dexter account';
-  const canCreate = !checking && dexter.model.stage === 'connect';
+  const canCreate = !checking && dexter.model.stage === 'connect' && !credentialEntry?.signedIn && !(credentialEntry && credentialNeedsSignIn);
   const creating = canCreate && createOpen;
   const canOpenWallet = dexter.model.stage === 'ready' && permissions.walletDataVisible;
   const finishCreation = Boolean(createdHandle && !permissions.accountContentVisible);
@@ -131,6 +136,14 @@ export function DexterAccountControl({ connection: dexter, open: controlledOpen,
     const visit = panelVisit.current;
     pendingAction.current = true; setPending(action); setError('');
     try {
+      if (action === 'credential' && credentialEntry) {
+        const result = await signInAccountIdentity();
+        if (isOpen.current && visit === panelVisit.current) {
+          credentialEntry.accept(result);
+          setCredentialNeedsSignIn(false);
+          dismiss();
+        }
+      }
       if (action === 'connect') {
         const target = createdHandle ?? (canOpenWallet && !permissions.accountContentVisible ? dexter.activeWallet?.userHandle : undefined);
         if (target) await dexter.connect({ userHandle: target });
@@ -140,10 +153,16 @@ export function DexterAccountControl({ connection: dexter, open: controlledOpen,
       }
       if (action === 'switch') { await dexter.useAnotherDexterWallet(); setCreatedHandle(null); }
       if (action === 'retry') await dexter.retry();
-      if (action === 'disconnect') { await dexter.disconnectDexter(); setCreatedHandle(null); close(); }
+      if (action === 'disconnect') { await dexter.disconnectDexter(); credentialAccess?.clear(); setCreatedHandle(null); close(); }
     } catch (caught) {
-      setError(action === 'disconnect' ? 'Dexter could not finish that action. Try again.'
-        : formatError(caught instanceof ConnectError ? caught.code : dexter.error?.code));
+      if (action === 'credential') {
+        setError(caught instanceof ConnectError && caught.code === 'user_cancelled'
+          ? 'The passkey prompt closed. Try again when you’re ready.'
+          : 'Dexter could not verify your passkey. Try signing in again.');
+      } else {
+        setError(action === 'disconnect' ? 'Dexter could not finish that action. Try again.'
+          : formatError(caught instanceof ConnectError ? caught.code : dexter.error?.code));
+      }
     } finally { pendingAction.current = false; setPending(null); }
   };
 
@@ -180,6 +199,14 @@ export function DexterAccountControl({ connection: dexter, open: controlledOpen,
               <h2 id={`${id}-title`} tabIndex={-1} ref={welcomeTitle}>Welcome to Dexter</h2>
               <p className="dx-welcome-intro">Use your account across the apps you connect. You choose what your agents can do.</p>
               <CreateWalletPanel agentDelegation="deferred" terminology="account" showName="on-request" withMark={false}
+                onCredentialCreated={credentialEntry ? result => {
+                  credentialEntry.accept(result); setCreateOpen(false); dismiss();
+                } : undefined}
+                onError={credentialEntry ? err => {
+                  if (err.code !== 'account_identity_request_uncertain' && err.code !== 'credential_exists') return;
+                  setCredentialNeedsSignIn(true); setCreateOpen(false);
+                  setError('Sign in with the passkey you created to finish setting up your account.');
+                } : undefined}
                 onCreated={(result) => { setCreatedHandle(result.handle); setCreateOpen(false); }}/>
               <button type="button" className="dx-welcome-link" onClick={() => setCreateOpen(false)}>Sign in instead</button>
             </div>
@@ -187,13 +214,19 @@ export function DexterAccountControl({ connection: dexter, open: controlledOpen,
               <a href="https://dexter.cash/terms" target="_blank" rel="noreferrer">Terms of Service</a> and acknowledge the{' '}
               <a href="https://dexter.cash/privacy" target="_blank" rel="noreferrer">Privacy Policy</a>.</footer>
           </> : <>
-            {(needsConnection || finishCreation) && <div className="dx-account-entry">
+            {credentialEntry?.signedIn && <div className="dx-account-entry">
+              <p className="dx-account-status">You’re signed in with your passkey.</p>
+              <button type="button" className="dx-account-primary" onClick={() => void run('connect')} disabled={busy}>Connect a wallet</button>
+              <button type="button" className="dx-account-create" onClick={() => { credentialEntry.clear(); dismiss(); }} disabled={busy}>Sign out</button>
+            </div>}
+            {!credentialEntry?.signedIn && (needsConnection || finishCreation) && <div className="dx-account-entry">
               {dexter.model.stage === 'repair' && <p className="dx-account-explanation">Reconnect your passkey to continue.</p>}
               <button type="button" className="dx-account-primary" ref={entryAction} disabled={busy}
-                onClick={() => void run(dexter.model.primaryAction === 'retry' ? 'retry' : 'connect')}>
+                onClick={() => void run(credentialEntry ? 'credential' : dexter.model.primaryAction === 'retry' ? 'retry' : 'connect')}>
                 {busy ? 'Opening passkey...' : finishCreation ? 'Finish signing in' : dexter.model.stage === 'repair' ? 'Reconnect Dexter'
                   : dexter.model.stage === 'error' || dexter.model.stage === 'offline' ? 'Try again' : 'Sign in with Dexter'}
               </button>
+              {credentialEntry && <button type="button" className="dx-account-create" onClick={() => void run('connect')} disabled={busy}>Use an existing wallet</button>}
               {canCreate && !finishCreation && <button type="button" className="dx-account-create" onClick={() => setCreateOpen(true)} disabled={busy}>Create an account</button>}
             </div>}
             {canOpenWallet && <div key={`${dexter.activeWallet?.userHandle ?? 'account'}:${dexter.activeWallet?.vaultPda ?? ''}`}>

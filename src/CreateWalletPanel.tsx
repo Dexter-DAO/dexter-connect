@@ -6,6 +6,7 @@ import { ensureConsentStyles } from './consentStyles';
 import { ceremonyPhaseLabel } from './phase';
 import { authoredPolicy } from './policy';
 import { createWallet, type CreateWalletResult } from './enroll';
+import { enrollAccountIdentity, type AccountIdentityResult } from './accountIdentity';
 import { shouldUsePopup } from './popup';
 import {
   ConnectError,
@@ -22,6 +23,8 @@ import {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface CreateWalletPanelProps {
+  /** Use the credential-only Account ceremony in place of wallet creation. */
+  onCredentialCreated?: (result: AccountIdentityResult) => void;
   /** Fired with the minted wallet the moment creation succeeds. */
   onCreated?: (result: CreateWalletResult) => void;
   /** Fired with the typed error if the ceremony fails. */
@@ -62,6 +65,7 @@ export function CreateWalletPanel(props: CreateWalletPanelProps): ReactElement {
     withMark = true,
   } = props;
   const account = terminology === 'account';
+  const credentialOnly = !!props.onCredentialCreated;
   useEffect(ensureConsentStyles, []);
   useEffect(ensureDexterButtonStyles, []);
   const nameInputId = useId();
@@ -82,7 +86,7 @@ export function CreateWalletPanel(props: CreateWalletPanelProps): ReactElement {
   }, [transport]);
 
   const hosted = resolvedTransport === 'popup';
-  const ownerOnly = agentDelegation === 'deferred';
+  const ownerOnly = credentialOnly || agentDelegation === 'deferred';
   const passkeyHint = account && ownerOnly && resolvedTransport === 'inline';
   const policy =
     resolvedTransport === 'inline' && !ownerOnly
@@ -115,6 +119,11 @@ export function CreateWalletPanel(props: CreateWalletPanelProps): ReactElement {
     setRunning(true);
     setPhase(null);
     try {
+      if (props.onCredentialCreated) {
+        const result = await enrollAccountIdentity({ name: hosted ? undefined : name.trim() || undefined, apiBase, transport, onPhase: setPhase });
+        props.onCredentialCreated(result);
+        return;
+      }
       const result = await createWallet({
         name: hosted ? undefined : name.trim() || (account ? 'Dexter account' : 'Dexter Wallet'),
         spendPolicy: hosted ? undefined : policy ?? undefined,
@@ -140,7 +149,7 @@ export function CreateWalletPanel(props: CreateWalletPanelProps): ReactElement {
   const nameField = (
     <div className="dx-cwp__field">
       <label className="dx-cwp__label" htmlFor={nameInputId}>
-        {account ? 'Account name' : 'Name your wallet'}
+        {credentialOnly ? 'Passkey name' : account ? 'Account name' : 'Name your wallet'}
       </label>
       <input
         id={nameInputId}
@@ -208,7 +217,7 @@ export function CreateWalletPanel(props: CreateWalletPanelProps): ReactElement {
       {passkeyHint && <p className="dx-cwp__hint" id={`${nameInputId}-hint`}>Your device will ask for a passkey.</p>}
       {showName === 'on-request' && resolvedTransport === 'inline' && (
         <details className="dx-cwp__naming">
-          <summary>Name this {account ? 'account' : 'wallet'}</summary>
+          <summary>Name this {credentialOnly ? 'passkey' : account ? 'account' : 'wallet'}</summary>
           {nameField}
         </details>
       )}
