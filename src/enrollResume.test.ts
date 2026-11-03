@@ -54,6 +54,24 @@ describe('interrupted Wallet creation', () => {
     expect(values.size).toBe(0);
   });
 
+  it('keeps an interrupted allowance intact when an owner-only signup tries to resume it', async () => {
+    const spendPolicy = { spendLimitAtomic: '99000000', sessionTtlSeconds: '2592000' };
+    await expect(createWallet({ transport: 'inline', spendPolicy })).rejects.toMatchObject({ code: 'initialize_failed' });
+    const saved = new Map(values);
+    fetchMock.mockClear();
+    await expect(createWallet({ transport: 'inline', agentDelegation: 'deferred' })).rejects.toMatchObject({
+      code: 'pending_creation_has_spend_policy',
+    });
+    expect(values).toEqual(saved);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(startRegistration).toHaveBeenCalledOnce();
+    expect(startAuthentication).not.toHaveBeenCalled();
+    resumeResponses();
+    await createWallet({ transport: 'inline', agentDelegation: 'configure-now', spendPolicy });
+    const initialize = fetchMock.mock.calls.find(([url]) => String(url).endsWith('/initialize'));
+    expect(JSON.parse(initialize![1].body)).toMatchObject(spendPolicy);
+  });
+
   it('resumes after a module reload using the retained checkpoint', async () => {
     await expect(createWallet({ transport: 'inline', name: 'Original' })).rejects.toMatchObject({ code: 'initialize_failed' });
     vi.resetModules();

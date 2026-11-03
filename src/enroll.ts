@@ -163,6 +163,12 @@ async function createWalletOperation(
     throw new ConnectError('webauthn_unsupported', 'WebAuthn unavailable in this environment');
   }
   const pending = readPendingCreation();
+  if (pending && config.agentDelegation === 'deferred' && pending.spendPolicy !== undefined) {
+    throw new ConnectError(
+      'pending_creation_has_spend_policy',
+      'Finish the account setup that included a spending allowance before continuing.',
+    );
+  }
   if (pending) return resumeCreation(apiBase, pending, walletStore, config.onPhase);
   const name = (config.name && config.name.trim()) || DEFAULT_WALLET_NAME;
 
