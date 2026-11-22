@@ -224,7 +224,7 @@ export function DexterAccountControl({ connection: dexter, open: controlledOpen,
               <button type="button" className="dx-account-primary" ref={entryAction} disabled={busy}
                 onClick={() => void run(credentialEntry ? 'credential' : dexter.model.primaryAction === 'retry' ? 'retry' : 'connect')}>
                 {busy ? 'Opening passkey...' : finishCreation ? 'Finish signing in' : dexter.model.stage === 'repair' ? 'Reconnect Dexter'
-                  : dexter.model.stage === 'error' || dexter.model.stage === 'offline' ? 'Try again' : 'Sign in with Dexter'}
+                  : dexter.model.stage === 'error' || dexter.model.stage === 'offline' ? 'Try again' : 'Connect Dexter'}
               </button>
               {credentialEntry && <button type="button" className="dx-account-create" onClick={() => void run('connect')} disabled={busy}>Use an existing wallet</button>}
               {canCreate && !finishCreation && <button type="button" className="dx-account-create" onClick={() => setCreateOpen(true)} disabled={busy}>Create an account</button>}

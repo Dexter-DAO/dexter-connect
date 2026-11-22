@@ -45,7 +45,7 @@ function clipboard(writeText: ReturnType<typeof vi.fn>) {
     const result = { profile: 'account-identity-v1' };
     credentials.signIn.mockResolvedValue(result); credentials.enroll.mockResolvedValue(result);
     view = await render(<DexterAccountControl connection={c} credentialAccess={access}/>);
-    await open(); await click(button('Sign in with Dexter'));
+    await open(); await click(button('Connect Dexter'));
     expect(access.accept).toHaveBeenCalledWith(result);
     await open(); await click(button('Create an account')); await click(button('Create my account'));
     expect(credentials.enroll).toHaveBeenCalledOnce();
@@ -70,11 +70,11 @@ function clipboard(writeText: ReturnType<typeof vi.fn>) {
     view = await render(<DexterAccountControl connection={c}/>);
     await open();
     expect(view.container.querySelector('.dx-account-identity svg')).not.toBeNull();
-    expect(button('Sign in with Dexter').querySelector('svg')).toBeNull();
+    expect(button('Connect Dexter').querySelector('svg')).toBeNull();
     expect(view.container.querySelector('[src^="/assets"]')).toBeNull();
     expect(view.container.querySelector('style')?.textContent).toContain('.dx-account-panel');
     expect(button('Create an account')).toBeTruthy();
-    await click(button('Sign in with Dexter'));
+    await click(button('Connect Dexter'));
     expect(c.connect).toHaveBeenCalledTimes(1);
     expect(button('Open Dexter account').getAttribute('aria-expanded')).toBe('false');
     expect(balance).not.toHaveBeenCalled();
@@ -215,7 +215,7 @@ function clipboard(writeText: ReturnType<typeof vi.fn>) {
     expect(document.getElementById(create.getAttribute('aria-describedby')!)?.textContent).toBe('Your device will ask for a passkey.');
     expect(view.container.querySelector('details')?.open).toBe(false);
     await click(button('Sign in instead'));
-    expect(document.activeElement).toBe(button('Sign in with Dexter'));
+    expect(document.activeElement).toBe(button('Connect Dexter'));
     await click(button('Create an account'));
     await click(button('Close'));
     expect(document.activeElement).toBe(button('Open Dexter account'));
@@ -229,7 +229,7 @@ function clipboard(writeText: ReturnType<typeof vi.fn>) {
     c.connect = vi.fn(() => new Promise<Awaited<ReturnType<typeof c.connect>>>(resolve => { finish = () => resolve({} as never); }));
     view = await render(<DexterAccountControl connection={c}/>);
     await open();
-    await click(button('Sign in with Dexter'));
+    await click(button('Connect Dexter'));
     const field = document.createElement('input');
     view.container.append(field);
     await act(async () => field.focus());
@@ -324,7 +324,7 @@ function clipboard(writeText: ReturnType<typeof vi.fn>) {
     const triggers = Array.from(view.container.querySelectorAll('button'));
     expect(triggers[0].getAttribute('aria-controls')).not.toBe(triggers[1].getAttribute('aria-controls'));
     await click(triggers[0]);
-    await act(async () => button('Sign in with Dexter').focus());
+    await act(async () => button('Connect Dexter').focus());
     await keydown(window.document.body, 'Escape');
     expect(document.activeElement).toBe(triggers[0]);
   });

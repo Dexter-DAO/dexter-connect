@@ -42,7 +42,7 @@ const ANON_SIGN_BASE = '/api/passkey-anon/sign';
 primeImmediateSupport();
 
 /**
- * "Sign in with Dexter" — the discoverable-credential login ceremony.
+ * Dexter Connect sign-in: the discoverable-credential login ceremony.
  *
  *   1. POST /login-challenge  → a server-issued challenge (no allow-list:
  *      the resident passkey itself identifies the user)
@@ -116,7 +116,7 @@ function assertTargetAccount(result: SignInResult, expected: string | undefined)
 }
 
 // ── Hybrid "continue" — register-or-sign-in in one call ──────────────────────
-// One "Sign in with Dexter" button serves both a returning user and a brand-new
+// One "Connect Dexter" button serves both a returning user and a brand-new
 // one (like "Sign in with Google" creates if you're new). The decision is
 // KEYCHAIN-FIRST, never localStorage-first: a synced passkey on a fresh device
 // has no local handle, and guessing "create" there silently mints a second

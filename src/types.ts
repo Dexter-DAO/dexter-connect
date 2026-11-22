@@ -48,7 +48,7 @@ export interface ConnectVault {
   walletLabel?: string | null;
 }
 
-/** Result of a completed "Sign in with Dexter" ceremony. */
+/** Result of a completed Dexter Connect sign-in ceremony. */
 export interface SignInResult {
   session: PasskeyLoginTokens;
   vault: ConnectVault;

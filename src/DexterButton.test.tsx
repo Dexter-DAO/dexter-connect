@@ -12,14 +12,14 @@ function btn(container: HTMLElement): HTMLButtonElement {
 
 describe('DexterButton size variant', () => {
   it('defaults to md — no sm class', async () => {
-    const { container } = await render(<DexterButton>Sign in with Dexter</DexterButton>);
+    const { container } = await render(<DexterButton>Connect Dexter</DexterButton>);
     expect(btn(container).classList.contains('dx-btn--sm')).toBe(false);
   });
 
   it("size='sm' applies the mini class alongside variant/block", async () => {
     const { container } = await render(
       <DexterButton size="sm" variant="secondary" block>
-        Sign in with Dexter
+        Connect Dexter
       </DexterButton>,
     );
     const el = btn(container);

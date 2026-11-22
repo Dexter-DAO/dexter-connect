@@ -10,7 +10,7 @@
 // FIRE ON TAP ONLY: never call this on mount. iOS ≤17.3 grants one
 // gesture-less WebAuthn get() "freebie" whose consumption can hang the next
 // modal get(); 17.4+ replaces it with opaque rate limiting. The UI copy for
-// this verb is "Sign in with Dexter" — "recover" is a code name that must
+// this verb is "Connect Dexter" — "recover" is a code name that must
 // never reach a user (SPEC P1.4).
 
 import { startAuthentication, browserSupportsWebAuthn } from '@simplewebauthn/browser';
