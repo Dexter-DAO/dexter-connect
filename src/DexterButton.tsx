@@ -3,7 +3,7 @@ import { useEffect, type ButtonHTMLAttributes, type ReactElement, type ReactNode
 // ─────────────────────────────────────────────────────────────────────────────
 // DexterButton is the one branded button. Presentational: the look + every state
 // (hover / focus / active / disabled / loading), themeable via --dx-* CSS vars,
-// primary/secondary variants. <SignInWithDexter> uses it for sign-in; the wallet
+// primary/secondary variants. <DexterAccountControl> uses it for Connect sign-in; the wallet
 // create flow uses it for "Create your Dexter Wallet"; any surface wires it to
 // its own action. This is the cure for hand-rolled copies (Rule #7): one button,
 // many skins, every surface.
@@ -121,7 +121,7 @@ export function DexterMark(): ReactElement {
 
 export interface DexterButtonProps
   extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'children' | 'onClick' | 'disabled' | 'className' | 'type'> {
-  /** Button content (e.g. "Sign in with Dexter", "Create your Dexter Wallet"). */
+  /** Button content (e.g. "Connect Dexter", "Create your Dexter Wallet"). */
   children?: ReactNode;
   /** Loading state: shows the animated spinner + `loadingLabel`, disables click. */
   loading?: boolean;

@@ -8,7 +8,7 @@ import { ensureWalletKitStyles } from './walletKitStyles';
 // Identity header + actions (Manage / Save / Eject wallet). Presentational: the
 // consumer feeds the label and wires the action callbacks; the menu owns the
 // "Save your wallet" flip and reveals whatever sign-in UI the consumer slots in
-// (e.g. <SignInWithDexter/>). One branded wallet menu, every surface (Rule #7);
+// (e.g. <DexterAccountControl/>). One branded wallet menu, every surface (Rule #7);
 // themeable via --dx-* CSS vars.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -23,7 +23,7 @@ export interface DexterWalletMenuProps {
   onStartFresh?: () => void;
   /** Label for the eject/reset row. Default "Eject wallet". */
   startFreshLabel?: string;
-  /** Sign-in/save UI revealed when "Save your wallet" is tapped (e.g. <SignInWithDexter/>). Row hidden if omitted. */
+  /** Sign-in/save UI revealed when "Save your wallet" is tapped (e.g. <DexterAccountControl/>). Row hidden if omitted. */
   saveSlot?: ReactNode;
   /** Short hint shown above the save UI. */
   saveHint?: string;

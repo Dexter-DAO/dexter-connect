@@ -27,7 +27,7 @@ export type { CreateWalletConfig, CreateWalletResult } from './enroll';
 // discoverable passkey — NO account session (the wallet IS the sign-in,
 // 2026-07-05 ruling). This is the verb dexter-fe's header hand-rolled before
 // 0.21.0; the fork dies with this export (Rule #7). Fire on tap only — never
-// on mount. UI copy stays "Sign in with Dexter"; "recover" never reaches users.
+// on mount. UI copy stays "Connect Dexter"; "recover" never reaches users.
 export { recoverWallet } from './recover';
 export type { RecoverOutcome, RecoverVault, RecoverWalletConfig } from './types';
 // Wallet/account relationship state. A consumer supplies the API verifier;

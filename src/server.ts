@@ -1,7 +1,7 @@
 /**
  * @dexterai/connect/server — offline Dexter session verification.
  *
- * The server half of Sign in with Dexter (CONTRACT-dexter-session-token.md):
+ * The server half of Dexter Connect sign-in (CONTRACT-dexter-session-token.md):
  * a local ES256 signature check against the published JWKS — no call to
  * Supabase or dexter-api on the hot path, so it runs on Node and edge
  * runtimes alike. Pre-hook tokens (no `dexter` claim) verify as signed-in

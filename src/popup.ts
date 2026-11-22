@@ -12,7 +12,7 @@ import { normalizeMissingVaultRecoveryOptions } from './missingVaultRecoveryCont
 import { resolveDexterConnectHost } from './trust';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Hosted-popup transport — "Sign in with Dexter on ANY website."
+// Hosted-popup transport — "Connect Dexter on ANY website."
 //
 // WebAuthn credentials are bound to the rpId origin (dexter.cash), so an in-page
 // ceremony only works on Dexter's own origins. To make it work from a stranger
